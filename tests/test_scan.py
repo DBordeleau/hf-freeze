@@ -350,3 +350,55 @@ AutoModel.from_pretrained("org/space-constant", revision=SPACE)
         )
         == 4
     )
+
+
+def test_extracts_literal_and_scope_safe_trust_remote_code(tmp_path: Path) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "trust.py": """\
+ALLOW = True
+DENY = False
+AutoModel.from_pretrained("org/model", trust_remote_code=True)
+load_dataset("org/data", trust_remote_code=False)
+hf_hub_download("org/file", trust_remote_code=ALLOW)
+snapshot_download("org/snapshot", trust_remote_code=DENY)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert [finding.trust_remote_code for finding in findings] == [
+        True,
+        False,
+        True,
+        False,
+    ]
+    assert all(
+        finding.trust_remote_code_unresolved_reason is None for finding in findings
+    )
+
+
+def test_reports_dynamic_or_ambiguous_trust_remote_code(tmp_path: Path) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "trust.py": """\
+ALLOW = True
+ALLOW = False
+AutoModel.from_pretrained("org/model", trust_remote_code=get_policy())
+load_dataset("org/data", trust_remote_code=ALLOW)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert findings[0].trust_remote_code_unresolved_reason == (
+        "trust_remote_code is a dynamic expression"
+    )
+    assert findings[1].trust_remote_code_unresolved_reason == (
+        "trust_remote_code name 'ALLOW' does not have one unambiguous boolean "
+        "assignment"
+    )

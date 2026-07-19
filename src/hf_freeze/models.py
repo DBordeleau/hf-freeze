@@ -29,6 +29,14 @@ class DependencyKind(str, Enum):
     SNAPSHOT = "snapshot"
 
 
+CALL_KIND_TO_DEPENDENCY_KIND = {
+    CallKind.FROM_PRETRAINED: DependencyKind.MODEL,
+    CallKind.LOAD_DATASET: DependencyKind.DATASET,
+    CallKind.HF_HUB_DOWNLOAD: DependencyKind.DIRECT_FILE,
+    CallKind.SNAPSHOT_DOWNLOAD: DependencyKind.SNAPSHOT,
+}
+
+
 @dataclass(frozen=True)
 class SourceLocation:
     """A zero-based column and one-based line in a scanned source file."""
@@ -49,6 +57,8 @@ class DependencyFinding:
     source: SourceLocation
     unresolved_reason: str | None = None
     revision_unresolved_reason: str | None = None
+    trust_remote_code: bool = False
+    trust_remote_code_unresolved_reason: str | None = None
 
 
 @dataclass(frozen=True)

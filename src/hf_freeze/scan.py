@@ -50,17 +50,17 @@ class _ConstantCollector(cst.CSTVisitor):
     """Record literal values for simple binding nodes."""
 
     def __init__(self) -> None:
-        self.values: dict[int, str | None] = {}
+        self.values: dict[int, str | bool | None] = {}
 
     def visit_Assign(self, node: cst.Assign) -> None:
-        value = _literal_string(node.value)
+        value = _literal_value(node.value)
         for target in node.targets:
             if isinstance(target.target, cst.Name):
                 self.values[id(target.target)] = value
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         if isinstance(node.target, cst.Name):
-            value = _literal_string(node.value) if node.value is not None else None
+            value = _literal_value(node.value) if node.value is not None else None
             self.values[id(node.target)] = value
 
     def visit_AugAssign(self, node: cst.AugAssign) -> None:
@@ -72,7 +72,7 @@ class _FindingVisitor(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (PositionProvider, ScopeProvider)
 
     def __init__(
-        self, display_path: str, binding_values: dict[int, str | None]
+        self, display_path: str, binding_values: dict[int, str | bool | None]
     ) -> None:
         self.display_path = display_path
         self.binding_values = binding_values
@@ -85,20 +85,26 @@ class _FindingVisitor(cst.CSTVisitor):
 
         repo_expression = _find_argument(node, spec.keyword_names)
         repo_id, unresolved_reason = _resolve_repo_id(
-            repo_expression, self._resolve_name
+            repo_expression, self._resolve_string_name
         )
         if repo_id is not None and _is_obvious_local_path(repo_id):
             return
 
         revision_expression = _find_argument(node, ("revision",), positional_index=None)
         requested_revision, revision_unresolved_reason = _resolve_revision(
-            revision_expression, self._resolve_name
+            revision_expression, self._resolve_string_name
+        )
+        trust_expression = _find_argument(
+            node, ("trust_remote_code",), positional_index=None
+        )
+        trust_remote_code, trust_unresolved_reason = _resolve_boolean(
+            trust_expression, self._resolve_boolean_name
         )
         position = self.get_metadata(PositionProvider, node).start
         self.findings.append(
             DependencyFinding(
                 repo_id=repo_id,
-                repo_type=_repo_type(node, spec.repo_type, self._resolve_name),
+                repo_type=_repo_type(node, spec.repo_type, self._resolve_string_name),
                 call_kind=spec.kind,
                 requested_revision=requested_revision,
                 source=SourceLocation(
@@ -108,16 +114,26 @@ class _FindingVisitor(cst.CSTVisitor):
                 ),
                 unresolved_reason=unresolved_reason,
                 revision_unresolved_reason=revision_unresolved_reason,
+                trust_remote_code=trust_remote_code,
+                trust_remote_code_unresolved_reason=trust_unresolved_reason,
             )
         )
 
-    def _resolve_name(self, expression: cst.Name) -> str | None:
+    def _binding_value(self, expression: cst.Name) -> str | bool | None:
         scope = self.get_metadata(ScopeProvider, expression)
         assignments = scope[expression.value]
         if len(assignments) != 1:
             return None
         assignment = next(iter(assignments))
         return self.binding_values.get(id(assignment.node))
+
+    def _resolve_string_name(self, expression: cst.Name) -> str | None:
+        value = self._binding_value(expression)
+        return value if isinstance(value, str) else None
+
+    def _resolve_boolean_name(self, expression: cst.Name) -> bool | None:
+        value = self._binding_value(expression)
+        return value if isinstance(value, bool) else None
 
 
 def scan_path(path: str | Path = ".") -> ScanResult:
@@ -243,6 +259,34 @@ def _literal_string(expression: cst.BaseExpression | None) -> str | None:
     except ValueError:
         return None
     return value if isinstance(value, str) else None
+
+
+def _literal_value(expression: cst.BaseExpression) -> str | bool | None:
+    string = _literal_string(expression)
+    if string is not None:
+        return string
+    if isinstance(expression, cst.Name) and expression.value in {"True", "False"}:
+        return expression.value == "True"
+    return None
+
+
+def _resolve_boolean(
+    expression: cst.BaseExpression | None,
+    resolve_name: Callable[[cst.Name], bool | None],
+) -> tuple[bool, str | None]:
+    if expression is None:
+        return False, None
+    if isinstance(expression, cst.Name):
+        if expression.value in {"True", "False"}:
+            return expression.value == "True", None
+        value = resolve_name(expression)
+        if value is not None:
+            return value, None
+        return False, (
+            f"trust_remote_code name '{expression.value}' does not have one "
+            "unambiguous boolean assignment"
+        )
+    return False, "trust_remote_code is a dynamic expression"
 
 
 def _resolve_optional_string(

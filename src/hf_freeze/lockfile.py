@@ -10,6 +10,7 @@ from typing import Any
 
 from hf_freeze.hub import HubResolver
 from hf_freeze.models import (
+    CALL_KIND_TO_DEPENDENCY_KIND,
     CallKind,
     DependencyFinding,
     DependencyKind,
@@ -35,14 +36,6 @@ class LockfileFormatError(LockError):
     """Lockfile input is malformed or uses an unsupported version."""
 
 
-_KINDS = {
-    CallKind.FROM_PRETRAINED: DependencyKind.MODEL,
-    CallKind.LOAD_DATASET: DependencyKind.DATASET,
-    CallKind.HF_HUB_DOWNLOAD: DependencyKind.DIRECT_FILE,
-    CallKind.SNAPSHOT_DOWNLOAD: DependencyKind.SNAPSHOT,
-}
-
-
 def resolve_lockfile(scan_result: ScanResult, resolver: HubResolver) -> Lockfile:
     """Validate findings, deduplicate resolution calls, and build a lockfile."""
 
@@ -65,7 +58,7 @@ def resolve_lockfile(scan_result: ScanResult, resolver: HubResolver) -> Lockfile
         ):
             unresolved.append(finding)
             continue
-        kind = _KINDS[finding.call_kind]
+        kind = CALL_KIND_TO_DEPENDENCY_KIND[finding.call_kind]
         if (
             finding.requested_revision is not None
             and not finding.requested_revision.strip()
