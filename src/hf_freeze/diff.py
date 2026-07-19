@@ -6,8 +6,10 @@ import json
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import PurePosixPath
+from typing import Protocol
 
-from hf_freeze.models import LockedDependency, Lockfile
+from hf_freeze.lockfile import LockSelectionError, select_repository_entries
+from hf_freeze.models import LockedDependency, Lockfile, RepoType
 
 SEMANTIC_FILES = {"config.json", "tokenizer_config.json", "adapter_config.json"}
 SEMANTIC_SIZE_LIMIT = 64 * 1024
@@ -15,6 +17,27 @@ SEMANTIC_SIZE_LIMIT = 64 * 1024
 
 class DiffError(Exception):
     """An expected failure to prepare a repository diff."""
+
+
+class SemanticReadError(Exception):
+    """A small semantic file could not be read safely."""
+
+
+class PreviewResolver(Protocol):
+    def resolve(self, repo_id: str, repo_type: RepoType, revision: str) -> str: ...
+
+    def tree(
+        self, repo_id: str, repo_type: RepoType, revision: str
+    ) -> tuple[RepositoryFile, ...]: ...
+
+    def read_small_file(
+        self,
+        repo_id: str,
+        repo_type: RepoType,
+        revision: str,
+        path: str,
+        expected_size: int | None,
+    ) -> str: ...
 
 
 class ArtifactCategory(str, Enum):
@@ -73,21 +96,69 @@ class DiffResult:
     unknown_changed_sizes: int
 
 
+@dataclass(frozen=True)
+class DiffPreview:
+    candidate_revision: str
+    candidate_sha: str
+    rendered: str
+
+
 def select_locked_dependency(lockfile: Lockfile, repo_id: str) -> LockedDependency:
     """Select an exact repository match, rejecting incompatible duplicates."""
 
-    matches = [item for item in lockfile.dependencies if item.repo_id == repo_id]
-    if not matches:
-        raise DiffError(f"repository '{repo_id}' is not present in hf.lock")
-    identities = {
-        (item.repo_type, item.sha, item.requested_revision) for item in matches
-    }
-    if len(identities) != 1:
-        raise DiffError(
-            f"repository '{repo_id}' has ambiguous hf.lock entries with different "
-            "types, SHAs, or requested revisions"
+    try:
+        return select_repository_entries(lockfile, repo_id)[0]
+    except LockSelectionError as error:
+        raise DiffError(str(error)) from error
+
+
+def preview_locked_dependency(
+    locked: LockedDependency,
+    candidate_revision: str,
+    resolver: PreviewResolver,
+) -> DiffPreview:
+    """Resolve and render one complete, bounded repository update preview."""
+
+    candidate_sha = resolver.resolve(
+        locked.repo_id, locked.repo_type, candidate_revision
+    )
+    if candidate_sha == locked.sha:
+        rendered = (
+            f"{locked.repo_id}\n{locked.sha} -> {candidate_sha}\n\n"
+            "No changes; candidate resolves to the locked commit.\n\n"
+            "No remote Python code changed.\nEstimated changed bytes: 0"
         )
-    return matches[0]
+        return DiffPreview(candidate_revision, candidate_sha, rendered)
+
+    old_tree = resolver.tree(locked.repo_id, locked.repo_type, locked.sha)
+    new_tree = resolver.tree(locked.repo_id, locked.repo_type, candidate_sha)
+    result = compare_trees(old_tree, new_tree)
+    for change in result.files:
+        if not semantic_eligible(change):
+            continue
+        try:
+            old_text = resolver.read_small_file(
+                locked.repo_id,
+                locked.repo_type,
+                locked.sha,
+                change.path,
+                change.old.size,
+            )
+            new_text = resolver.read_small_file(
+                locked.repo_id,
+                locked.repo_type,
+                candidate_sha,
+                change.path,
+                change.new.size,
+            )
+        except SemanticReadError:
+            old_text = new_text = None
+        result = with_semantic_diff(result, change.path, old_text, new_text)
+    return DiffPreview(
+        candidate_revision,
+        candidate_sha,
+        render_diff(locked.repo_id, locked.sha, candidate_sha, result),
+    )
 
 
 def categorize(path: str) -> ArtifactCategory:

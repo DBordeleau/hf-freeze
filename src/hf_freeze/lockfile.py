@@ -6,10 +6,10 @@ import json
 import os
 import re
 import tempfile
+from dataclasses import replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from hf_freeze.hub import HubResolver
 from hf_freeze.models import (
     CALL_KIND_TO_DEPENDENCY_KIND,
     CallKind,
@@ -21,6 +21,9 @@ from hf_freeze.models import (
     RepoType,
     ScanResult,
 )
+
+if TYPE_CHECKING:
+    from hf_freeze.hub import HubResolver
 
 SCHEMA_VERSION = 1
 _COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
@@ -37,6 +40,57 @@ class LockValidationError(LockError):
 
 class LockfileFormatError(LockError):
     """Lockfile input is malformed or uses an unsupported version."""
+
+
+class LockSelectionError(LockError):
+    """A repository cannot be selected safely for an update."""
+
+
+def select_repository_entries(
+    lockfile: Lockfile, repo_id: str
+) -> tuple[LockedDependency, ...]:
+    """Return exact compatible matches, allowing different kinds and sources."""
+
+    matches = tuple(item for item in lockfile.dependencies if item.repo_id == repo_id)
+    if not matches:
+        raise LockSelectionError(f"repository '{repo_id}' is not present in hf.lock")
+    identities: set[_Identity] = set()
+    for item in matches:
+        identity = (item.repo_type, item.repo_id, item.kind)
+        if identity in identities:
+            raise LockSelectionError(
+                f"hf.lock contains multiple entries for {item.repo_type.value} "
+                f"repository '{repo_id}' ({item.kind.value}); remove the duplicates "
+                "before updating"
+            )
+        identities.add(identity)
+    states = {(item.repo_type, item.sha, item.requested_revision) for item in matches}
+    if len(states) != 1:
+        raise LockSelectionError(
+            f"repository '{repo_id}' has ambiguous/incompatible hf.lock entries "
+            "with different types, SHAs, or requested revisions"
+        )
+    return matches
+
+
+def update_repository_entries(
+    lockfile: Lockfile,
+    repo_id: str,
+    requested_revision: str,
+    sha: str,
+) -> Lockfile:
+    """Return a deterministic lockfile updating every compatible exact match."""
+
+    select_repository_entries(lockfile, repo_id)
+    dependencies = (
+        replace(item, requested_revision=requested_revision, sha=sha)
+        if item.repo_id == repo_id
+        else item
+        for item in lockfile.dependencies
+    )
+    return replace(
+        lockfile, dependencies=tuple(sorted(dependencies, key=_dependency_key))
+    )
 
 
 def resolve_lockfile(

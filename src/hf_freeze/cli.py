@@ -13,17 +13,16 @@ from hf_freeze.check import (
 )
 from hf_freeze.diff import (
     DiffError,
-    compare_trees,
-    render_diff,
+    preview_locked_dependency,
     select_locked_dependency,
-    semantic_eligible,
-    with_semantic_diff,
 )
-from hf_freeze.hub import HfHubResolver, HubContentError, HubResolutionError
+from hf_freeze.hub import HfHubResolver, HubResolutionError
 from hf_freeze.lockfile import (
     LockError,
     read_lockfile,
     resolve_lockfile,
+    select_repository_entries,
+    update_repository_entries,
     write_lockfile,
 )
 from hf_freeze.models import DependencyFinding, ScanDiagnostic, ScanResult
@@ -159,48 +158,64 @@ def diff_command(
     candidate_revision = revision if revision is not None else locked.requested_revision
     resolver = HfHubResolver()
     try:
-        candidate_sha = resolver.resolve(repo_id, locked.repo_type, candidate_revision)
-        if candidate_sha == locked.sha:
-            typer.echo(
-                f"{repo_id}\n{locked.sha} -> {candidate_sha}\n\n"
-                "No changes; candidate resolves to the locked commit.\n\n"
-                "No remote Python code changed.\nEstimated changed bytes: 0"
-            )
-            return
-        old_tree = resolver.tree(repo_id, locked.repo_type, locked.sha)
-        new_tree = resolver.tree(repo_id, locked.repo_type, candidate_sha)
-    except HubResolutionError as error:
+        preview = preview_locked_dependency(locked, candidate_revision, resolver)
+    except (HubResolutionError, DiffError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
+    typer.echo(preview.rendered)
 
+
+@app.command()
+def update(
+    repo_id: str = typer.Argument(...),
+    revision: str | None = typer.Option(None, "--revision"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Preview or atomically accept one repository update into hf.lock."""
+
+    destination = Path("hf.lock")
     try:
-        result = compare_trees(old_tree, new_tree)
-    except DiffError as error:
+        lockfile = read_lockfile(destination)
+        locked = select_repository_entries(lockfile, repo_id)[0]
+    except (LockError, OSError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
 
-    for change in result.files:
-        if not semantic_eligible(change):
-            continue
-        try:
-            old_text = resolver.read_small_file(
-                repo_id,
-                locked.repo_type,
-                locked.sha,
-                change.path,
-                change.old.size,
-            )
-            new_text = resolver.read_small_file(
-                repo_id,
-                locked.repo_type,
-                candidate_sha,
-                change.path,
-                change.new.size,
-            )
-        except HubContentError:
-            old_text = new_text = None
-        result = with_semantic_diff(result, change.path, old_text, new_text)
-    typer.echo(render_diff(repo_id, locked.sha, candidate_sha, result))
+    candidate_revision = revision if revision is not None else locked.requested_revision
+    try:
+        preview = preview_locked_dependency(locked, candidate_revision, HfHubResolver())
+        updated = update_repository_entries(
+            lockfile, repo_id, candidate_revision, preview.candidate_sha
+        )
+    except (HubResolutionError, DiffError, LockError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(preview.rendered)
+    typer.echo(
+        "\nProposed hf.lock change:\n"
+        f"  requested_revision: {locked.requested_revision} -> {candidate_revision}\n"
+        f"  sha: {locked.sha} -> {preview.candidate_sha}"
+    )
+    effective_change = (
+        candidate_revision != locked.requested_revision
+        or preview.candidate_sha != locked.sha
+    )
+    if not effective_change:
+        typer.echo("\nhf.lock is already current; no file was replaced.")
+        return
+    if not write:
+        typer.echo("\nDry run; pass --write to update hf.lock.")
+        return
+    try:
+        write_lockfile(destination, updated)
+    except (LockError, OSError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        "\nWrote hf.lock.\n"
+        "Next run 'hf-freeze pin --write', then 'hf-freeze check --frozen'."
+    )
 
 
 @app.command()

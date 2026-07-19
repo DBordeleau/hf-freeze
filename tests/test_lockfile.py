@@ -7,11 +7,14 @@ import pytest
 
 from hf_freeze.lockfile import (
     LockfileFormatError,
+    LockSelectionError,
     LockValidationError,
     lockfile_to_dict,
     parse_lockfile,
     resolve_lockfile,
+    select_repository_entries,
     serialize_lockfile,
+    update_repository_entries,
     write_lockfile,
 )
 from hf_freeze.models import (
@@ -261,6 +264,68 @@ def test_first_exact_sha_lock_retains_normal_resolution_behavior() -> None:
     assert resolver.calls == [("org/repo", RepoType.MODEL, SHA)]
     assert lockfile.dependencies[0].requested_revision == SHA
     assert lockfile.dependencies[0].sha == f"sha-org/repo-{SHA}"
+
+
+def test_update_repository_entries_preserves_compatible_entry_details() -> None:
+    source = LockedSource("app.py", 4, CallKind.FROM_PRETRAINED)
+    model = replace(locked_dependency(sources=(source,)), kind=DependencyKind.MODEL)
+    snapshot = replace(
+        locked_dependency(
+            sources=(LockedSource("download.py", 8, CallKind.SNAPSHOT_DOWNLOAD),)
+        ),
+        kind=DependencyKind.SNAPSHOT,
+    )
+    unrelated = replace(locked_dependency(), repo_id="a/unrelated", sha=OTHER_SHA)
+    lockfile = Lockfile(1, (snapshot, model, unrelated))
+
+    updated = update_repository_entries(lockfile, "org/repo", "stable", OTHER_SHA)
+
+    matches = select_repository_entries(updated, "org/repo")
+    assert [(item.kind, item.sources) for item in matches] == [
+        (DependencyKind.MODEL, model.sources),
+        (DependencyKind.SNAPSHOT, snapshot.sources),
+    ]
+    assert all(item.requested_revision == "stable" for item in matches)
+    assert all(item.sha == OTHER_SHA for item in matches)
+    assert updated.dependencies[0] == unrelated
+    assert (
+        update_repository_entries(updated, "org/repo", "stable", OTHER_SHA) == updated
+    )
+
+
+def test_update_repository_selection_rejects_missing_and_incompatible_entries() -> None:
+    with pytest.raises(LockSelectionError, match="not present"):
+        select_repository_entries(Lockfile(1, ()), "org/repo")
+
+    incompatible = Lockfile(
+        1,
+        (
+            locked_dependency(),
+            replace(
+                locked_dependency(requested_revision="stable"),
+                kind=DependencyKind.SNAPSHOT,
+            ),
+        ),
+    )
+    with pytest.raises(LockSelectionError, match="ambiguous/incompatible"):
+        update_repository_entries(incompatible, "org/repo", "stable", OTHER_SHA)
+
+
+def test_update_repository_selection_rejects_duplicate_full_identities() -> None:
+    duplicate = Lockfile(
+        1,
+        (
+            locked_dependency(),
+            locked_dependency(
+                sources=(LockedSource("other.py", 2, CallKind.PIPELINE),)
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        LockSelectionError, match="multiple entries.*remove the duplicates"
+    ):
+        select_repository_entries(duplicate, "org/repo")
 
 
 def test_serialization_is_canonical_and_round_trips() -> None:
