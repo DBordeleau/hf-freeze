@@ -10,6 +10,7 @@ readme = { text = "hf-freeze", content-type = "text/plain" }
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = [
+    "huggingface_hub>=1.0,<2",
     "libcst>=1.8",
     "typer>=0.12",
 ]

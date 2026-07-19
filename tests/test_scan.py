@@ -280,3 +280,73 @@ def test_scan_cli_fixture_smoke() -> None:
         "app.py:4:8  load_dataset  dataset  org/data  revision=<default>"
         in result.stdout
     )
+
+
+def test_revision_discovery_distinguishes_omitted_resolved_and_dynamic(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "revisions.py": """\
+REVISION = "constant-v2"
+AutoModel.from_pretrained("org/default")
+AutoModel.from_pretrained("org/literal", revision="literal-v1")
+AutoModel.from_pretrained("org/constant", revision=REVISION)
+AutoModel.from_pretrained("org/dynamic", revision=get_revision())
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert [finding.requested_revision for finding in findings] == [
+        None,
+        "literal-v1",
+        "constant-v2",
+        None,
+    ]
+    assert findings[0].revision_unresolved_reason is None
+    assert findings[3].revision_unresolved_reason == (
+        "revision is returned by a function call"
+    )
+
+    result = CliRunner().invoke(app, ["scan", str(project)])
+    assert (
+        "revision=<unresolved: revision is returned by a function call>"
+        in result.stdout
+    )
+    assert "org/dynamic  revision=<default>" not in result.stdout
+
+
+def test_empty_and_whitespace_revisions_are_explicitly_unresolved(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "empty.py": """\
+EMPTY = ""
+SPACE = "   "
+AutoModel.from_pretrained("org/empty-literal", revision="")
+AutoModel.from_pretrained("org/space-literal", revision="   ")
+AutoModel.from_pretrained("org/empty-constant", revision=EMPTY)
+AutoModel.from_pretrained("org/space-constant", revision=SPACE)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert all(finding.requested_revision is None for finding in findings)
+    assert all(
+        finding.revision_unresolved_reason == "revision is empty or whitespace-only"
+        for finding in findings
+    )
+    result = CliRunner().invoke(app, ["scan", str(project)])
+    assert (
+        result.stdout.count(
+            "revision=<unresolved: revision is empty or whitespace-only>"
+        )
+        == 4
+    )

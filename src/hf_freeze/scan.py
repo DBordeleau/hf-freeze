@@ -91,7 +91,7 @@ class _FindingVisitor(cst.CSTVisitor):
             return
 
         revision_expression = _find_argument(node, ("revision",), positional_index=None)
-        requested_revision = _resolve_optional_string(
+        requested_revision, revision_unresolved_reason = _resolve_revision(
             revision_expression, self._resolve_name
         )
         position = self.get_metadata(PositionProvider, node).start
@@ -107,6 +107,7 @@ class _FindingVisitor(cst.CSTVisitor):
                     column=position.column,
                 ),
                 unresolved_reason=unresolved_reason,
+                revision_unresolved_reason=revision_unresolved_reason,
             )
         )
 
@@ -256,6 +257,43 @@ def _resolve_optional_string(
     if isinstance(expression, cst.Name):
         return resolve_name(expression)
     return None
+
+
+def _resolve_revision(
+    expression: cst.BaseExpression | None,
+    resolve_name: Callable[[cst.Name], str | None],
+) -> tuple[str | None, str | None]:
+    if expression is None:
+        return None, None
+    literal = _literal_string(expression)
+    if literal is not None:
+        if literal.strip():
+            return literal, None
+        return None, "revision is empty or whitespace-only"
+    if isinstance(expression, cst.Name):
+        value = resolve_name(expression)
+        if value is not None:
+            if value.strip():
+                return value, None
+            return None, "revision is empty or whitespace-only"
+        return (
+            None,
+            f"revision name '{expression.value}' does not have one "
+            "unambiguous string assignment",
+        )
+    if isinstance(expression, cst.Subscript):
+        reason = "revision is a subscript expression"
+    elif isinstance(expression, cst.FormattedString):
+        reason = "revision is an interpolated string"
+    elif isinstance(expression, cst.Call):
+        reason = "revision is returned by a function call"
+    elif isinstance(expression, cst.IfExp):
+        reason = "revision is a conditional expression"
+    elif isinstance(expression, cst.Attribute):
+        reason = "revision is an attribute expression"
+    else:
+        reason = "revision is a dynamic expression"
+    return None, reason
 
 
 def _resolve_repo_id(

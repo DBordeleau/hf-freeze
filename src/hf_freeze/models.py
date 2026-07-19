@@ -20,6 +20,15 @@ class RepoType(str, Enum):
     DATASET = "dataset"
 
 
+class DependencyKind(str, Enum):
+    """Dependency categories stored in schema-v1 lockfiles."""
+
+    MODEL = "model"
+    DATASET = "dataset"
+    DIRECT_FILE = "direct_file"
+    SNAPSHOT = "snapshot"
+
+
 @dataclass(frozen=True)
 class SourceLocation:
     """A zero-based column and one-based line in a scanned source file."""
@@ -39,6 +48,7 @@ class DependencyFinding:
     requested_revision: str | None
     source: SourceLocation
     unresolved_reason: str | None = None
+    revision_unresolved_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,3 +65,32 @@ class ScanResult:
 
     findings: tuple[DependencyFinding, ...]
     diagnostics: tuple[ScanDiagnostic, ...]
+
+
+@dataclass(frozen=True)
+class LockedSource:
+    """A deterministic, project-relative source reference."""
+
+    path: str
+    line: int
+    call: CallKind
+
+
+@dataclass(frozen=True)
+class LockedDependency:
+    """One immutable Hub dependency in a lockfile."""
+
+    repo_id: str
+    repo_type: RepoType
+    kind: DependencyKind
+    requested_revision: str
+    sha: str
+    sources: tuple[LockedSource, ...]
+
+
+@dataclass(frozen=True)
+class Lockfile:
+    """The supported schema-v1 lockfile."""
+
+    version: int
+    dependencies: tuple[LockedDependency, ...]
