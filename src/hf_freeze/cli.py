@@ -11,6 +11,7 @@ from hf_freeze.check import (
     check_lockfile,
     check_remote_code_without_lock,
 )
+from hf_freeze.config import ConfigError, resolve_project_context
 from hf_freeze.diff import (
     DiffError,
     preview_locked_dependency,
@@ -46,6 +47,7 @@ def version() -> None:
 @app.command()
 def scan(path: Path = typer.Argument(Path("."))) -> None:
     """Discover supported Hugging Face Hub calls in Python source."""
+    _resolve_context(path)
     try:
         result = scan_path(path)
     except ValueError as error:
@@ -82,6 +84,7 @@ def scan(path: Path = typer.Argument(Path("."))) -> None:
 @app.command()
 def lock(path: Path = typer.Argument(Path("."))) -> None:
     """Resolve discovered Hub dependencies and atomically write hf.lock."""
+    _resolve_context(path)
     try:
         result = scan_path(path)
     except ValueError as error:
@@ -111,6 +114,7 @@ def check(
     """Check that source is immutably covered by hf.lock without network access."""
     if not frozen:
         raise typer.BadParameter("required for this command", param_hint="--frozen")
+    _resolve_context(path)
     try:
         result = scan_path(path)
     except ValueError as error:
@@ -148,6 +152,7 @@ def diff_command(
 ) -> None:
     """Compare a locked commit with a candidate Hub revision."""
 
+    _resolve_context(Path.cwd())
     try:
         lockfile = read_lockfile(Path("hf.lock"))
         locked = select_locked_dependency(lockfile, repo_id)
@@ -173,6 +178,7 @@ def update(
 ) -> None:
     """Preview or atomically accept one repository update into hf.lock."""
 
+    _resolve_context(Path.cwd())
     destination = Path("hf.lock")
     try:
         lockfile = read_lockfile(destination)
@@ -225,6 +231,7 @@ def pin(
 ) -> None:
     """Preview or atomically apply exact locked revisions to supported calls."""
 
+    _resolve_context(path)
     try:
         result = scan_path(path)
     except ValueError as error:
@@ -259,6 +266,14 @@ def pin(
         )
     if plan.skipped or write_skips:
         raise typer.Exit(code=1)
+
+
+def _resolve_context(path: Path) -> None:
+    try:
+        resolve_project_context(path)
+    except ConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
 
 
 def _lock_issue(code: str, message: str) -> CheckIssue:

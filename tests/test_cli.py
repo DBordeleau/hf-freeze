@@ -4,6 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from hf_freeze.cli import app
+from hf_freeze.config import ConfigError
 from hf_freeze.diff import RepositoryFile
 from hf_freeze.hub import HubContentError, HubResolutionError
 from hf_freeze.lockfile import read_lockfile, write_lockfile
@@ -61,6 +62,49 @@ def test_version_command() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == "hf-freeze 0.1.0\n"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["scan"],
+        ["lock"],
+        ["check", "--frozen"],
+        ["pin"],
+        ["diff", "org/repo"],
+        ["update", "org/repo"],
+    ],
+)
+def test_commands_validate_shared_project_context_before_work(
+    arguments: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = Path.cwd() / "pyproject.toml"
+    monkeypatch.setattr(
+        "hf_freeze.cli.resolve_project_context",
+        lambda _path: (_ for _ in ()).throw(
+            ConfigError(f"invalid configuration {config_path}: test failure")
+        ),
+    )
+    monkeypatch.setattr(
+        "hf_freeze.cli.scan_path",
+        lambda *_: pytest.fail("scanning started before configuration validation"),
+    )
+    monkeypatch.setattr(
+        "hf_freeze.cli.HfHubResolver",
+        lambda: pytest.fail("network access started before configuration validation"),
+    )
+    monkeypatch.setattr(
+        "hf_freeze.cli.read_lockfile",
+        lambda *_: pytest.fail(
+            "lockfile access started before configuration validation"
+        ),
+    )
+
+    result = CliRunner().invoke(app, arguments)
+
+    assert result.exit_code == 1
+    assert str(config_path) in result.stderr
+    assert "test failure" in result.stderr
 
 
 def test_diff_command_uses_candidate_tree_and_semantic_json(
