@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,6 +10,14 @@ from pathlib import Path
 import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider, ScopeProvider
 
+from hf_freeze.config import (
+    DEFAULT_EXCLUDED_DIRECTORIES as _DEFAULT_EXCLUDED_DIRECTORIES,
+)
+from hf_freeze.config import (
+    ProjectConfig,
+    ProjectContext,
+    iter_scoped_python_files,
+)
 from hf_freeze.models import (
     CallKind,
     DependencyFinding,
@@ -20,23 +27,7 @@ from hf_freeze.models import (
     SourceLocation,
 )
 
-DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
-    {
-        ".git",
-        ".mypy_cache",
-        ".nox",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".tox",
-        ".venv",
-        "__pycache__",
-        "build",
-        "dist",
-        "env",
-        "node_modules",
-        "venv",
-    }
-)
+DEFAULT_EXCLUDED_DIRECTORIES = _DEFAULT_EXCLUDED_DIRECTORIES
 
 LOCAL_DATASET_BUILDERS = frozenset({"json", "parquet"})
 
@@ -161,18 +152,20 @@ class _FindingVisitor(cst.CSTVisitor):
         return value if isinstance(value, bool) else None
 
 
-def scan_path(path: str | Path = ".") -> ScanResult:
+def scan_path(
+    path: str | Path = ".", *, context: ProjectContext | None = None
+) -> ScanResult:
     """Scan one Python file or a directory tree without importing project code."""
 
     target = Path(path)
-    if not target.exists():
-        raise ValueError(f"scan path does not exist: {target}")
-    if target.is_file() and target.suffix != ".py":
-        raise ValueError(f"scan path is not a Python file: {target}")
+    if context is None:
+        root = target.resolve(strict=False)
+        root = root.parent if root.is_file() else root
+        context = ProjectContext(root, None, ProjectConfig())
 
     findings: list[DependencyFinding] = []
     diagnostics: list[ScanDiagnostic] = []
-    for source_path, display_path in _python_files(target):
+    for source_path, display_path in iter_scoped_python_files(context, target):
         file_findings, diagnostic = _scan_file(source_path, display_path)
         findings.extend(file_findings)
         if diagnostic is not None:
@@ -185,23 +178,6 @@ def scan_path(path: str | Path = ".") -> ScanResult:
         findings=tuple(sorted(findings, key=location_key)),
         diagnostics=tuple(sorted(diagnostics, key=location_key)),
     )
-
-
-def _python_files(target: Path) -> list[tuple[Path, str]]:
-    if target.is_file():
-        return [(target, target.name)]
-
-    files: list[tuple[Path, str]] = []
-    for directory, directory_names, file_names in os.walk(target):
-        directory_names[:] = sorted(
-            name for name in directory_names if name not in DEFAULT_EXCLUDED_DIRECTORIES
-        )
-        base = Path(directory)
-        for file_name in sorted(file_names):
-            if file_name.endswith(".py"):
-                source_path = base / file_name
-                files.append((source_path, source_path.relative_to(target).as_posix()))
-    return sorted(files, key=lambda item: item[1])
 
 
 def _scan_file(

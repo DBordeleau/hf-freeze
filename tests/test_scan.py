@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from hf_freeze.cli import app
+from hf_freeze.config import resolve_project_context
 from hf_freeze.models import CallKind, RepoType
 from hf_freeze.scan import scan_path
 
@@ -422,6 +423,26 @@ def test_default_exclusions_and_no_project_imports(tmp_path: Path) -> None:
 
     assert [finding.repo_id for finding in result.findings] == ["org/included"]
     assert result.diagnostics == ()
+
+
+def test_configured_scan_uses_root_relative_posix_paths_for_narrow_scope(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.hf-freeze]\ninclude = ["src/**/*.py"]\n',
+            "src/nested/app.py": 'AutoModel.from_pretrained("org/model")\n',
+            "src/other.py": 'AutoModel.from_pretrained("org/other")\n',
+        },
+    )
+    context = resolve_project_context(project / "src" / "nested")
+
+    result = scan_path(project / "src" / "nested", context=context)
+
+    assert [(item.source.path, item.repo_id) for item in result.findings] == [
+        ("src/nested/app.py", "org/model")
+    ]
 
 
 def test_recovers_from_parse_errors_and_orders_by_path_and_position(

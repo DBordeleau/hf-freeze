@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from hf_freeze.config import ConfigError, ProjectConfig, resolve_project_context
+from hf_freeze.config import (
+    ConfigError,
+    ProjectConfig,
+    iter_scoped_python_files,
+    resolve_project_context,
+)
 from hf_freeze.models import RepoType
 
 
@@ -167,3 +172,55 @@ def test_nested_placeholder_validation(
 
     with pytest.raises(ConfigError, match=message):
         resolve_project_context(tmp_path)
+
+
+def test_scope_uses_gitignore_patterns_exclude_precedence_and_hard_exclusions(
+    tmp_path: Path,
+) -> None:
+    write_config(
+        tmp_path,
+        """
+[tool.hf-freeze]
+include = ["app.py", "src/**/*.py", "build/reincluded.py"]
+exclude = ["src/excluded/**"]
+""",
+    )
+    for relative_path in (
+        "app.py",
+        "other.py",
+        "src/first.py",
+        "src/nested/second.py",
+        "src/excluded/ignored.py",
+        "build/reincluded.py",
+    ):
+        source = tmp_path / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("", encoding="utf-8")
+
+    context = resolve_project_context(tmp_path)
+    selected = iter_scoped_python_files(context, tmp_path)
+    narrowed = iter_scoped_python_files(context, tmp_path / "src" / "nested")
+
+    assert [display for _, display in selected] == [
+        "app.py",
+        "src/first.py",
+        "src/nested/second.py",
+    ]
+    assert [display for _, display in narrowed] == ["src/nested/second.py"]
+
+
+@pytest.mark.parametrize("field", ["include", "exclude"])
+def test_invalid_gitignore_pattern_names_configuration_path_and_field(
+    field: str, tmp_path: Path
+) -> None:
+    config_path = write_config(
+        tmp_path, f'[tool.hf-freeze]\n{field} = ["invalid\\\\"]\n'
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        resolve_project_context(tmp_path)
+
+    message = str(raised.value)
+    assert str(config_path.resolve()) in message
+    assert f"{field}[0]" in message
+    assert "gitignore pattern" in message

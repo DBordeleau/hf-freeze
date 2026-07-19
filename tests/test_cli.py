@@ -171,6 +171,24 @@ def test_diff_command_missing_lock_is_expected_failure(
     assert "Error:" in result.stderr
 
 
+def test_diff_and_update_use_configured_root_lock_from_nested_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.hf-freeze]\n", encoding="utf-8")
+    write_lockfile(tmp_path / "hf.lock", Lockfile(1, (locked_dependency(),)))
+    nested = tmp_path / "src" / "package"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    resolver = UpdateResolver(OLD_SHA)
+    monkeypatch.setattr("hf_freeze.cli.HfHubResolver", lambda: resolver)
+
+    diff = CliRunner().invoke(app, ["diff", "org/repo"])
+    update = CliRunner().invoke(app, ["update", "org/repo"])
+
+    assert diff.exit_code == update.exit_code == 0
+    assert "hf.lock is already current" in update.stdout
+
+
 def test_update_dry_run_and_write_share_diff_and_update_all_compatible_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

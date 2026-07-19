@@ -11,7 +11,12 @@ from hf_freeze.check import (
     check_lockfile,
     check_remote_code_without_lock,
 )
-from hf_freeze.config import ConfigError, resolve_project_context
+from hf_freeze.config import (
+    ConfigError,
+    ProjectContext,
+    iter_scoped_python_files,
+    resolve_project_context,
+)
 from hf_freeze.diff import (
     DiffError,
     preview_locked_dependency,
@@ -45,11 +50,11 @@ def version() -> None:
 
 
 @app.command()
-def scan(path: Path = typer.Argument(Path("."))) -> None:
+def scan(path: Path | None = typer.Argument(None)) -> None:
     """Discover supported Hugging Face Hub calls in Python source."""
-    _resolve_context(path)
+    context, requested_path = _resolve_scope(path)
     try:
-        result = scan_path(path)
+        result = scan_path(requested_path, context=context)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
@@ -82,15 +87,15 @@ def scan(path: Path = typer.Argument(Path("."))) -> None:
 
 
 @app.command()
-def lock(path: Path = typer.Argument(Path("."))) -> None:
+def lock(path: Path | None = typer.Argument(None)) -> None:
     """Resolve discovered Hub dependencies and atomically write hf.lock."""
-    _resolve_context(path)
+    context, requested_path = _resolve_scope(path)
     try:
-        result = scan_path(path)
+        result = scan_path(requested_path, context=context)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
-    destination = (path if path.is_dir() else path.parent) / "hf.lock"
+    destination = _source_lock_path(context, requested_path)
     try:
         existing_lockfile = read_lockfile(destination) if destination.exists() else None
         lockfile = resolve_lockfile(
@@ -108,19 +113,19 @@ def lock(path: Path = typer.Argument(Path("."))) -> None:
 
 @app.command()
 def check(
-    path: Path = typer.Argument(Path(".")),
+    path: Path | None = typer.Argument(None),
     frozen: bool = typer.Option(False, "--frozen"),
 ) -> None:
     """Check that source is immutably covered by hf.lock without network access."""
     if not frozen:
         raise typer.BadParameter("required for this command", param_hint="--frozen")
-    _resolve_context(path)
+    context, requested_path = _resolve_scope(path)
     try:
-        result = scan_path(path)
+        result = scan_path(requested_path, context=context)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
-    destination = (path if path.is_dir() else path.parent) / "hf.lock"
+    destination = _source_lock_path(context, requested_path)
     try:
         if not destination.exists():
             issues = _unusable_lock_issues(
@@ -152,9 +157,9 @@ def diff_command(
 ) -> None:
     """Compare a locked commit with a candidate Hub revision."""
 
-    _resolve_context(Path.cwd())
+    context = _resolve_context(Path.cwd())
     try:
-        lockfile = read_lockfile(Path("hf.lock"))
+        lockfile = read_lockfile(_cwd_lock_path(context))
         locked = select_locked_dependency(lockfile, repo_id)
     except (LockError, DiffError, OSError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -178,8 +183,8 @@ def update(
 ) -> None:
     """Preview or atomically accept one repository update into hf.lock."""
 
-    _resolve_context(Path.cwd())
-    destination = Path("hf.lock")
+    context = _resolve_context(Path.cwd())
+    destination = _cwd_lock_path(context)
     try:
         lockfile = read_lockfile(destination)
         locked = select_repository_entries(lockfile, repo_id)[0]
@@ -226,21 +231,30 @@ def update(
 
 @app.command()
 def pin(
-    path: Path = typer.Argument(Path(".")),
+    path: Path | None = typer.Argument(None),
     write: bool = typer.Option(False, "--write"),
 ) -> None:
     """Preview or atomically apply exact locked revisions to supported calls."""
 
-    _resolve_context(path)
+    context, requested_path = _resolve_scope(path)
     try:
-        result = scan_path(path)
+        result = scan_path(requested_path, context=context)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
-    root = path if path.is_dir() else path.parent
-    source_filter = None if path.is_dir() else frozenset({path.name})
+    if context.config_path is None:
+        root = requested_path if requested_path.is_dir() else requested_path.parent
+        source_filter = (
+            None if requested_path.is_dir() else frozenset({requested_path.name})
+        )
+    else:
+        root = context.root
+        source_filter = frozenset(
+            display_path
+            for _, display_path in iter_scoped_python_files(context, requested_path)
+        )
     try:
-        lockfile = read_lockfile(root / "hf.lock")
+        lockfile = read_lockfile(_source_lock_path(context, requested_path))
     except (LockError, OSError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
@@ -268,12 +282,33 @@ def pin(
         raise typer.Exit(code=1)
 
 
-def _resolve_context(path: Path) -> None:
+def _resolve_scope(path: Path | None) -> tuple[ProjectContext, Path]:
+    requested_path = path if path is not None else Path(".")
+    context = _resolve_context(requested_path)
+    if path is None and context.config_path is not None:
+        requested_path = context.root
+    return context, requested_path
+
+
+def _resolve_context(path: Path) -> ProjectContext:
     try:
-        resolve_project_context(path)
+        return resolve_project_context(path)
     except ConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1) from error
+
+
+def _source_lock_path(context: ProjectContext, requested_path: Path) -> Path:
+    if context.config_path is not None:
+        return context.root / "hf.lock"
+    root = requested_path if requested_path.is_dir() else requested_path.parent
+    return root / "hf.lock"
+
+
+def _cwd_lock_path(context: ProjectContext) -> Path:
+    return (
+        context.root / "hf.lock" if context.config_path is not None else Path("hf.lock")
+    )
 
 
 def _lock_issue(code: str, message: str) -> CheckIssue:

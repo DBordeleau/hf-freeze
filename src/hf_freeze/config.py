@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pathspec import GitIgnoreSpec
+from pathspec.patterns.gitignore import GitIgnorePatternError
 
 try:
     import tomllib
@@ -18,6 +22,24 @@ _CONFIG_KEYS = frozenset({"include", "exclude", "dependencies", "bindings"})
 _DEPENDENCY_KEYS = frozenset({"repo_id", "repo_type", "revision"})
 _BINDING_KEYS = frozenset({"environment"})
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".nox",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "env",
+        "node_modules",
+        "venv",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -77,6 +99,59 @@ def resolve_project_context(path: str | Path = ".") -> ProjectContext:
     return ProjectContext(fallback, None, ProjectConfig())
 
 
+def iter_scoped_python_files(
+    context: ProjectContext, requested_path: str | Path
+) -> tuple[tuple[Path, str], ...]:
+    """Return deterministic Python candidates with their source display paths."""
+
+    requested = Path(requested_path).resolve(strict=False)
+    if not requested.exists():
+        raise ValueError(f"scan path does not exist: {requested_path}")
+    if requested.is_file() and requested.suffix != ".py":
+        raise ValueError(f"scan path is not a Python file: {requested_path}")
+
+    if context.config_path is None:
+        display_root = requested.parent if requested.is_file() else requested
+    else:
+        try:
+            requested.relative_to(context.root)
+        except ValueError as error:
+            raise ValueError(
+                f"scan path is outside configured project root {context.root}: "
+                f"{requested}"
+            ) from error
+        display_root = context.root
+
+    include = _compile_patterns(context.config.include)
+    exclude = _compile_patterns(context.config.exclude)
+    selected: list[tuple[Path, str]] = []
+    for source_path in _candidate_python_files(requested):
+        display_path = source_path.relative_to(display_root).as_posix()
+        relative_parts = source_path.relative_to(display_root).parts[:-1]
+        if any(part in DEFAULT_EXCLUDED_DIRECTORIES for part in relative_parts):
+            continue
+        if context.config_path is not None:
+            included = not context.config.include or include.match_file(display_path)
+            if not included or exclude.match_file(display_path):
+                continue
+        selected.append((source_path, display_path))
+    return tuple(sorted(selected, key=lambda item: item[1]))
+
+
+def _candidate_python_files(requested: Path) -> tuple[Path, ...]:
+    if requested.is_file():
+        return (requested,)
+
+    files: list[Path] = []
+    for directory, directory_names, file_names in os.walk(requested):
+        directory_names[:] = sorted(
+            name for name in directory_names if name not in DEFAULT_EXCLUDED_DIRECTORIES
+        )
+        base = Path(directory)
+        files.extend(base / name for name in sorted(file_names) if name.endswith(".py"))
+    return tuple(files)
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as stream:
@@ -112,9 +187,26 @@ def _parse_config(table: dict[str, Any], path: Path) -> ProjectConfig:
     _reject_unknown(table, _CONFIG_KEYS, "[tool.hf-freeze]", path)
     include = _string_tuple(table.get("include", []), "include", path)
     exclude = _string_tuple(table.get("exclude", []), "exclude", path)
+    _validate_patterns(include, "include", path)
+    _validate_patterns(exclude, "exclude", path)
     dependencies = _parse_dependencies(table.get("dependencies", {}), path)
     bindings = _parse_bindings(table.get("bindings", {}), dependencies, path)
     return ProjectConfig(include, exclude, dependencies, bindings)
+
+
+def _validate_patterns(patterns: tuple[str, ...], field: str, path: Path) -> None:
+    for index, pattern in enumerate(patterns):
+        try:
+            _compile_patterns((pattern,))
+        except GitIgnorePatternError as error:
+            raise ConfigError(
+                f"invalid configuration {path}: {field}[{index}] is not a valid "
+                f"gitignore pattern: {error}"
+            ) from error
+
+
+def _compile_patterns(patterns: tuple[str, ...]) -> GitIgnoreSpec:
+    return GitIgnoreSpec.from_lines(patterns)
 
 
 def _string_tuple(value: Any, field: str, path: Path) -> tuple[str, ...]:

@@ -214,3 +214,67 @@ def test_lock_resolution_failure_is_an_expected_error(
     assert result.exit_code == 1
     assert "not accessible" in result.stderr
     assert not (tmp_path / "hf.lock").exists()
+
+
+def test_configured_omitted_path_lifecycle_uses_root_scope_and_exclusions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.hf-freeze]\nexclude = ["tests/**", "examples/**"]\n',
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text('AutoModel.from_pretrained("org/model")\n', encoding="utf-8")
+    excluded = tmp_path / "tests" / "test_dynamic.py"
+    excluded.parent.mkdir()
+    excluded.write_text("AutoModel.from_pretrained(get_model())\n", encoding="utf-8")
+    nested = tmp_path / "src" / "package"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    resolver = FakeResolver()
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    locked = runner.invoke(app, ["lock"])
+    pinned = runner.invoke(app, ["pin", "--write"])
+    checked = runner.invoke(app, ["check", "--frozen"])
+
+    assert locked.exit_code == pinned.exit_code == checked.exit_code == 0
+    assert (tmp_path / "hf.lock").is_file()
+    assert not (nested / "hf.lock").exists()
+    assert read_lockfile(tmp_path / "hf.lock").dependencies[0].sources[0].path == (
+        "src/app.py"
+    )
+    assert SHA in source.read_text(encoding="utf-8")
+    assert "get_model()" in excluded.read_text(encoding="utf-8")
+
+    previous_lock = (tmp_path / "hf.lock").read_bytes()
+    source.write_text("AutoModel.from_pretrained(get_model())\n", encoding="utf-8")
+    blocked = runner.invoke(app, ["lock"])
+
+    assert blocked.exit_code == 1
+    assert (tmp_path / "hf.lock").read_bytes() == previous_lock
+    assert resolver.calls == [("org/model", RepoType.MODEL, "main")]
+
+
+def test_configured_explicit_path_narrows_scope_but_writes_root_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.hf-freeze]\n", encoding="utf-8")
+    selected = tmp_path / "src" / "app.py"
+    selected.parent.mkdir()
+    selected.write_text('AutoModel.from_pretrained("org/model")\n', encoding="utf-8")
+    (tmp_path / "outside.py").write_text(
+        "AutoModel.from_pretrained(get_model())\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", FakeResolver)
+
+    result = CliRunner().invoke(app, ["lock", str(selected.parent)])
+
+    assert result.exit_code == 0
+    assert (tmp_path / "hf.lock").is_file()
+    assert not (selected.parent / "hf.lock").exists()
+    assert read_lockfile(tmp_path / "hf.lock").dependencies[0].sources[0].path == (
+        "src/app.py"
+    )

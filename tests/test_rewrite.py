@@ -481,6 +481,38 @@ def test_cli_safely_applies_other_files_but_exits_one_for_skip(tmp_path: Path) -
     assert "get_revision()" in (tmp_path / "b.py").read_text(encoding="utf-8")
 
 
+def test_configured_pin_ignores_out_of_scope_lock_sources(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.hf-freeze]\ninclude = ["src/**/*.py"]\n', encoding="utf-8"
+    )
+    selected = tmp_path / "src" / "app.py"
+    selected.parent.mkdir()
+    selected.write_text('AutoModel.from_pretrained("org/model")\n', encoding="utf-8")
+    excluded = tmp_path / "tests" / "old.py"
+    excluded.parent.mkdir()
+    excluded.write_text('AutoModel.from_pretrained("org/model")\n', encoding="utf-8")
+    locked = dependency("src/app.py")
+    locked = LockedDependency(
+        locked.repo_id,
+        locked.repo_type,
+        locked.kind,
+        locked.requested_revision,
+        locked.sha,
+        (
+            LockedSource("src/app.py", 1, CallKind.FROM_PRETRAINED),
+            LockedSource("tests/old.py", 1, CallKind.FROM_PRETRAINED),
+        ),
+    )
+    write_lockfile(tmp_path / "hf.lock", Lockfile(1, (locked,)))
+
+    result = CliRunner().invoke(app, ["pin", str(selected.parent), "--write"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Wrote src/app.py\n"
+    assert SHA in selected.read_text(encoding="utf-8")
+    assert SHA not in excluded.read_text(encoding="utf-8")
+
+
 def test_symlink_and_missing_lock_or_path_fail_safely(tmp_path: Path) -> None:
     missing_path = CliRunner().invoke(app, ["pin", str(tmp_path / "missing")])
     assert missing_path.exit_code == 2
