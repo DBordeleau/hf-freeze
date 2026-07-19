@@ -27,6 +27,7 @@ from hf_freeze.lockfile import (
     write_lockfile,
 )
 from hf_freeze.models import DependencyFinding, ScanDiagnostic, ScanResult
+from hf_freeze.rewrite import apply_rewrite_plan, plan_rewrites
 from hf_freeze.scan import scan_path
 
 app = typer.Typer(no_args_is_help=True)
@@ -197,6 +198,49 @@ def diff_command(
             old_text = new_text = None
         result = with_semantic_diff(result, change.path, old_text, new_text)
     typer.echo(render_diff(repo_id, locked.sha, candidate_sha, result))
+
+
+@app.command()
+def pin(
+    path: Path = typer.Argument(Path(".")),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Preview or atomically apply exact locked revisions to supported calls."""
+
+    try:
+        result = scan_path(path)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="PATH") from error
+
+    root = path if path.is_dir() else path.parent
+    source_filter = None if path.is_dir() else frozenset({path.name})
+    try:
+        lockfile = read_lockfile(root / "hf.lock")
+    except (LockError, OSError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    plan = plan_rewrites(root, lockfile, result, source_filter=source_filter)
+    write_skips = ()
+    if write:
+        written, write_skips = apply_rewrite_plan(root, plan)
+        for changed_path in written:
+            typer.echo(f"Wrote {changed_path}")
+    else:
+        for change in plan.changes:
+            typer.echo(change.diff, nl=False)
+
+    for noop in plan.noops:
+        target = noop.target
+        typer.echo(f"Already pinned {target.path}:{target.line}:{target.column + 1}")
+    for skipped in (*plan.skipped, *write_skips):
+        column = "" if skipped.column is None else f":{skipped.column + 1}"
+        typer.echo(
+            f"Skipped {skipped.path}:{skipped.line}{column}: {skipped.reason}",
+            err=True,
+        )
+    if plan.skipped or write_skips:
+        raise typer.Exit(code=1)
 
 
 def _lock_issue(code: str, message: str) -> CheckIssue:

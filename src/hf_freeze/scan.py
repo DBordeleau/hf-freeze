@@ -40,7 +40,7 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
 
 
 @dataclass(frozen=True)
-class _CallSpec:
+class CallSpec:
     kind: CallKind
     repo_type: RepoType
     keyword_names: tuple[str, ...]
@@ -79,7 +79,7 @@ class _FindingVisitor(cst.CSTVisitor):
         self.findings: list[DependencyFinding] = []
 
     def visit_Call(self, node: cst.Call) -> None:
-        spec = _match_call(node.func)
+        spec = match_call(node.func)
         if spec is None:
             return
 
@@ -208,7 +208,9 @@ def _scan_file(
     return visitor.findings, None
 
 
-def _match_call(function: cst.BaseExpression) -> _CallSpec | None:
+def match_call(function: cst.BaseExpression) -> CallSpec | None:
+    """Return the scanner's supported call specification for a function."""
+
     if isinstance(function, cst.Attribute):
         name = function.attr.value
     elif isinstance(function, cst.Name):
@@ -217,13 +219,13 @@ def _match_call(function: cst.BaseExpression) -> _CallSpec | None:
         return None
 
     if name == "load_dataset":
-        return _CallSpec(CallKind.LOAD_DATASET, RepoType.DATASET, ("path",))
+        return CallSpec(CallKind.LOAD_DATASET, RepoType.DATASET, ("path",))
     if name == "hf_hub_download":
-        return _CallSpec(CallKind.HF_HUB_DOWNLOAD, RepoType.MODEL, ("repo_id",))
+        return CallSpec(CallKind.HF_HUB_DOWNLOAD, RepoType.MODEL, ("repo_id",))
     if name == "snapshot_download":
-        return _CallSpec(CallKind.SNAPSHOT_DOWNLOAD, RepoType.MODEL, ("repo_id",))
+        return CallSpec(CallKind.SNAPSHOT_DOWNLOAD, RepoType.MODEL, ("repo_id",))
     if name == "from_pretrained" and isinstance(function, cst.Attribute):
-        return _CallSpec(
+        return CallSpec(
             CallKind.FROM_PRETRAINED,
             RepoType.MODEL,
             ("pretrained_model_name_or_path", "model_name_or_path"),
