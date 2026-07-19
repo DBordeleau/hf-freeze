@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "dependencies": [
+    {
+      "repo_id": "hf-internal-testing/tiny-random-bert",
+      "repo_type": "model",
+      "kind": "model",
+      "requested_revision": "main",
+      "sha": "9b8c223d42b2188cb49d29af482996f9d0f3e5a6",
+      "sources": [
+        {
+          "path": "app.py",
+          "line": 3,
+          "call": "from_pretrained"
+        }
+      ]
+    }
+  ]
+}
