@@ -38,6 +38,8 @@ DEFAULT_EXCLUDED_DIRECTORIES = frozenset(
     }
 )
 
+LOCAL_DATASET_BUILDERS = frozenset({"json", "parquet"})
+
 
 @dataclass(frozen=True)
 class CallSpec:
@@ -87,13 +89,31 @@ class _FindingVisitor(cst.CSTVisitor):
         repo_expression = _find_argument(
             node, spec.keyword_names, positional_index=spec.positional_index
         )
-        if spec.kind is CallKind.PIPELINE and repo_expression is None:
+        if spec.kind in {CallKind.PIPELINE, CallKind.SENTENCE_TRANSFORMER} and (
+            repo_expression is None
+        ):
             return
         repo_id, unresolved_reason = _resolve_repo_id(
             repo_expression, self._resolve_string_name
         )
         if repo_id is not None and _is_obvious_local_path(repo_id):
             return
+        if spec.kind is CallKind.LOAD_DATASET and repo_id in LOCAL_DATASET_BUILDERS:
+            builder_name = repo_id
+            data_files = _find_argument(node, ("data_files",), positional_index=None)
+            data_files_kind = _classify_data_files(data_files)
+            if data_files_kind == "non_hub":
+                return
+            repo_id = None
+            unresolved_reason = (
+                "load_dataset uses Hugging Face data_files; repository ID "
+                "extraction from data_files is unsupported"
+                if data_files_kind == "hub"
+                else (
+                    f"load_dataset packaged builder '{builder_name}' "
+                    "does not have confidently local data_files"
+                )
+            )
 
         revision_expression = _find_argument(node, ("revision",), positional_index=None)
         requested_revision, revision_unresolved_reason = _resolve_revision(
@@ -311,6 +331,69 @@ def _literal_value(expression: cst.BaseExpression) -> str | bool | None:
     if isinstance(expression, cst.Name) and expression.value in {"True", "False"}:
         return expression.value == "True"
     return None
+
+
+def _classify_data_files(expression: cst.BaseExpression | None) -> str:
+    if expression is None:
+        return "unknown"
+    value = _literal_string(expression)
+    if value is not None:
+        normalized = value.strip().lower()
+        if normalized.startswith(("hf://", "https://huggingface.co/")):
+            return "hub"
+        return "non_hub"
+    if isinstance(expression, cst.FormattedString):
+        if any(
+            isinstance(part, cst.FormattedStringText)
+            and any(
+                marker in part.value.lower()
+                for marker in ("hf://", "https://huggingface.co/")
+            )
+            for part in expression.parts
+        ):
+            return "hub"
+        return "unknown"
+    if isinstance(expression, (cst.List, cst.Tuple)):
+        values = [
+            element.value
+            for element in expression.elements
+            if isinstance(element, cst.Element)
+        ]
+        if len(values) != len(expression.elements):
+            return "unknown"
+        return _combine_data_files_kinds(values)
+    if isinstance(expression, cst.Dict):
+        values = [
+            element.value
+            for element in expression.elements
+            if isinstance(element, cst.DictElement)
+        ]
+        if len(values) != len(expression.elements):
+            return "unknown"
+        return _combine_data_files_kinds(values)
+    if isinstance(expression, cst.Call) and _is_os_path_join(expression.func):
+        return "non_hub"
+    return "unknown"
+
+
+def _combine_data_files_kinds(expressions: list[cst.BaseExpression]) -> str:
+    kinds = {_classify_data_files(expression) for expression in expressions}
+    if "hub" in kinds:
+        return "hub"
+    if kinds == {"non_hub"}:
+        return "non_hub"
+    return "unknown"
+
+
+def _is_os_path_join(expression: cst.BaseExpression) -> bool:
+    return (
+        isinstance(expression, cst.Attribute)
+        and expression.attr.value == "join"
+        and isinstance(expression.value, cst.Attribute)
+        and expression.value.attr.value == "path"
+        and isinstance(expression.value.value, cst.Name)
+        and expression.value.value.value == "os"
+    )
 
 
 def _resolve_boolean(

@@ -105,6 +105,96 @@ PeftModel.from_pretrained(base_model, ADAPTER_ID)
     assert findings[1].requested_revision == "sentence-v1"
 
 
+def test_ignores_non_hub_sentence_transformer_and_local_dataset_builders(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "local_inputs.py": """\
+import os
+
+SentenceTransformer(modules=[transformer, pooling])
+load_dataset("json", data_files="train.jsonl")
+load_dataset("parquet", data_files={"train": os.path.join(root, "train.parquet")})
+""",
+        },
+    )
+
+    assert scan_path(project).findings == ()
+
+
+def test_hf_data_files_are_actionable_unresolved_instead_of_fake_builder_ids(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "hub_files.py": """\
+load_dataset(
+    "parquet",
+    data_files={"train": "hf://datasets/org/data/train.parquet"},
+)
+load_dataset(
+    "parquet",
+    data_files={"train": f"hf://datasets/org/data/{split}/train.parquet"},
+)
+load_dataset(
+    "parquet",
+    data_files="https://huggingface.co/datasets/org/data/resolve/main/train.parquet",
+)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert len(findings) == 3
+    assert all(finding.call_kind is CallKind.LOAD_DATASET for finding in findings)
+    assert all(finding.repo_id is None for finding in findings)
+    assert {finding.unresolved_reason for finding in findings} == {
+        "load_dataset uses Hugging Face data_files; repository ID extraction from "
+        "data_files is unsupported"
+    }
+
+
+def test_unknown_dataset_builder_data_files_are_actionable_unresolved(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "unknown_files.py": """\
+DATA_FILES = get_data_files()
+load_dataset("json", data_files=DATA_FILES)
+""",
+        },
+    )
+
+    finding = scan_path(project).findings[0]
+
+    assert finding.repo_id is None
+    assert finding.unresolved_reason == (
+        "load_dataset packaged builder 'json' does not have confidently local "
+        "data_files"
+    )
+
+
+def test_namespaced_dataset_with_data_files_remains_a_hub_finding(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {"hub_dataset.py": 'load_dataset("org/data", data_files="train.jsonl")\n'},
+    )
+
+    findings = scan_path(project).findings
+
+    assert [(finding.call_kind, finding.repo_id) for finding in findings] == [
+        (CallKind.LOAD_DATASET, "org/data")
+    ]
+
+
 def test_new_matchers_report_dynamic_ids_and_ignore_unsupported_pipeline_forms(
     tmp_path: Path,
 ) -> None:

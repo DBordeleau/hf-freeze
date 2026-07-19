@@ -119,6 +119,10 @@ It scans source; it does not import or execute your project. Dynamic IDs,
 interpolated strings, imported configuration, and unsupported pipeline forms are
 reported rather than resolved silently.
 
+See [representative project compatibility](docs/compatibility.md) for the
+methodology and exact-commit results from five public repositories. That table
+records observed behavior and does not imply broad framework support.
+
 ## Complete lifecycle demo
 
 This compact terminal walkthrough uses synthetic repository metadata from the
