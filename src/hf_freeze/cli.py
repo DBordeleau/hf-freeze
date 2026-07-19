@@ -11,7 +11,15 @@ from hf_freeze.check import (
     check_lockfile,
     check_remote_code_without_lock,
 )
-from hf_freeze.hub import HfHubResolver, HubResolutionError
+from hf_freeze.diff import (
+    DiffError,
+    compare_trees,
+    render_diff,
+    select_locked_dependency,
+    semantic_eligible,
+    with_semantic_diff,
+)
+from hf_freeze.hub import HfHubResolver, HubContentError, HubResolutionError
 from hf_freeze.lockfile import (
     LockError,
     read_lockfile,
@@ -128,6 +136,67 @@ def check(
         _render_check_issue(issue)
     if any(issue.severity is IssueSeverity.ERROR for issue in issues):
         raise typer.Exit(code=1)
+
+
+@app.command(name="diff")
+def diff_command(
+    repo_id: str = typer.Argument(...),
+    revision: str | None = typer.Option(None, "--revision"),
+) -> None:
+    """Compare a locked commit with a candidate Hub revision."""
+
+    try:
+        lockfile = read_lockfile(Path("hf.lock"))
+        locked = select_locked_dependency(lockfile, repo_id)
+    except (LockError, DiffError, OSError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    candidate_revision = revision if revision is not None else locked.requested_revision
+    resolver = HfHubResolver()
+    try:
+        candidate_sha = resolver.resolve(repo_id, locked.repo_type, candidate_revision)
+        if candidate_sha == locked.sha:
+            typer.echo(
+                f"{repo_id}\n{locked.sha} -> {candidate_sha}\n\n"
+                "No changes; candidate resolves to the locked commit.\n\n"
+                "No remote Python code changed.\nEstimated changed bytes: 0"
+            )
+            return
+        old_tree = resolver.tree(repo_id, locked.repo_type, locked.sha)
+        new_tree = resolver.tree(repo_id, locked.repo_type, candidate_sha)
+    except HubResolutionError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    try:
+        result = compare_trees(old_tree, new_tree)
+    except DiffError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    for change in result.files:
+        if not semantic_eligible(change):
+            continue
+        try:
+            old_text = resolver.read_small_file(
+                repo_id,
+                locked.repo_type,
+                locked.sha,
+                change.path,
+                change.old.size,
+            )
+            new_text = resolver.read_small_file(
+                repo_id,
+                locked.repo_type,
+                candidate_sha,
+                change.path,
+                change.new.size,
+            )
+        except HubContentError:
+            old_text = new_text = None
+        result = with_semantic_diff(result, change.path, old_text, new_text)
+    typer.echo(render_diff(repo_id, locked.sha, candidate_sha, result))
 
 
 def _lock_issue(code: str, message: str) -> CheckIssue:
