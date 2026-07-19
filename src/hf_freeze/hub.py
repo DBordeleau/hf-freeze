@@ -15,7 +15,12 @@ from huggingface_hub.errors import (
 )
 from huggingface_hub.hf_api import RepoFile
 
-from hf_freeze.diff import SEMANTIC_FILES, SEMANTIC_SIZE_LIMIT, RepositoryFile
+from hf_freeze.diff import (
+    SEMANTIC_FILES,
+    SEMANTIC_SIZE_LIMIT,
+    RepositoryFile,
+    SemanticReadError,
+)
 from hf_freeze.models import RepoType
 
 
@@ -27,7 +32,7 @@ class HubTreeError(HubResolutionError):
     """A safe, user-facing failure to retrieve repository metadata."""
 
 
-class HubContentError(HubResolutionError):
+class HubContentError(HubResolutionError, SemanticReadError):
     """An allowlisted small file could not be read for semantic comparison."""
 
 

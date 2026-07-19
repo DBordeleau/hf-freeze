@@ -146,7 +146,14 @@ def test_lock_selection_coalesces_only_matching_identity() -> None:
 
     with pytest.raises(DiffError, match="ambiguous"):
         select_locked_dependency(
-            Lockfile(1, (first, dependency(sha="b" * 40))), "org/repo"
+            Lockfile(
+                1,
+                (
+                    first,
+                    dependency(sha="b" * 40, kind=DependencyKind.SNAPSHOT),
+                ),
+            ),
+            "org/repo",
         )
     with pytest.raises(DiffError, match="not present"):
         select_locked_dependency(Lockfile(1, ()), "org/repo")
