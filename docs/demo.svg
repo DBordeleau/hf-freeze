@@ -1,21 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="650" viewBox="0 0 1300 650" role="img" aria-labelledby="title desc">
-  <title id="title">hf-freeze tiny-random-bert metadata demo</title>
-  <desc id="desc">Terminal output from scan, exact-revision diff, and dry-run pin. The diff reports an added model.safetensors artifact of 520212 bytes without a weight download.</desc>
-  <rect width="1300" height="650" rx="14" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="850" viewBox="0 0 1300 850" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic hf-freeze complete lifecycle demo</title>
+  <desc id="desc">A fake-backed static terminal walkthrough shows scan, lock, dry-run source pin review, source pinning, and an offline frozen check. It then shows a metadata-only diff and dry-run update, explicit lock acceptance, a second dry-run source pin review, source pinning, and a final frozen check. It does not execute a model or download artifacts.</desc>
+  <rect width="1300" height="850" rx="14" fill="#0d1117"/>
   <rect width="1300" height="46" rx="14" fill="#21262d"/>
   <circle cx="28" cy="23" r="7" fill="#ff5f57"/><circle cx="52" cy="23" r="7" fill="#febc2e"/><circle cx="76" cy="23" r="7" fill="#28c840"/>
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#c9d1d9">
-    <text x="28" y="82" fill="#7ee787">$ hf-freeze scan .</text>
-    <text x="28" y="112">app.py:3:9  from_pretrained  model  hf-internal-testing/tiny-random-bert  revision=&lt;default&gt;</text>
-    <text x="28" y="160" fill="#7ee787">$ hf-freeze diff hf-internal-testing/tiny-random-bert --revision 8fc97e155588266e09c9f37d4a9608e1a65a279e</text>
-    <text x="28" y="190">hf-internal-testing/tiny-random-bert</text>
-    <text x="28" y="220">9b8c223d42b2188cb49d29af482996f9d0f3e5a6 -&gt; 8fc97e155588266e09c9f37d4a9608e1a65a279e</text>
-    <text x="28" y="268" fill="#79c0ff">Added</text>
-    <text x="52" y="298">WEIGHTS       model.safetensors</text>
-    <text x="28" y="346">No remote Python code changed.</text>
-    <text x="28" y="376">Estimated changed bytes: 520212</text>
-    <text x="28" y="424" fill="#7ee787">$ hf-freeze pin .</text>
-    <text x="28" y="454" fill="#f85149">-model = AutoModel.from_pretrained("hf-internal-testing/tiny-random-bert")</text>
-    <text x="28" y="484" fill="#7ee787">+model = AutoModel.from_pretrained("hf-internal-testing/tiny-random-bert", revision="9b8c223d42b2188cb49d29af482996f9d0f3e5a6")</text>
+    <text x="28" y="82" fill="#7ee787">$ hf-freeze scan</text>
+    <text x="28" y="112">app.py:1:1  from_pretrained  model  org/model  revision=main</text>
+    <text x="28" y="148" fill="#7ee787">$ hf-freeze lock</text><text x="260" y="148">Wrote hf.lock</text>
+    <text x="28" y="184" fill="#7ee787">$ hf-freeze pin</text><text x="220" y="184"># review source diff</text>
+    <text x="28" y="220" fill="#7ee787">$ hf-freeze pin --write</text><text x="308" y="220">Wrote app.py</text>
+    <text x="28" y="256" fill="#7ee787">$ hf-freeze check --frozen  # exits 0 offline</text>
+    <text x="28" y="310" fill="#7ee787">$ hf-freeze diff org/model</text>
+    <text x="28" y="340">org/model</text><text x="28" y="368">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -&gt; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</text>
+    <text x="28" y="404" fill="#79c0ff">Changed</text><text x="52" y="432">CONFIG        config.json (JSON keys: revision)</text>
+    <text x="28" y="462">No remote Python code changed.  Estimated changed bytes: 20</text>
+    <text x="28" y="506" fill="#7ee787">$ hf-freeze update org/model</text>
+    <text x="28" y="536">Proposed hf.lock change:  requested_revision: main -&gt; main</text>
+    <text x="28" y="564">sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -&gt; bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</text>
+    <text x="28" y="592">Dry run; pass --write to update hf.lock.</text>
+    <text x="28" y="636" fill="#7ee787">$ hf-freeze update org/model --write</text><text x="500" y="636">Wrote hf.lock</text>
+    <text x="28" y="672" fill="#7ee787">$ hf-freeze pin</text><text x="220" y="672"># review updated source diff</text>
+    <text x="28" y="708" fill="#7ee787">$ hf-freeze pin --write</text><text x="308" y="708">Wrote app.py</text>
+    <text x="28" y="744" fill="#7ee787">$ hf-freeze check --frozen  # exits 0 offline</text>
   </g>
 </svg>
