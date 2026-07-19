@@ -5,10 +5,12 @@ build-backend = "uv_build"
 [project]
 name = "hf-freeze"
 version = "0.1.0"
-description = "Freeze Hugging Face Hub dependencies."
-readme = { text = "hf-freeze", content-type = "text/plain" }
+description = "Freeze Hugging Face Hub dependencies with deterministic lockfiles."
+readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+urls = { Repository = "https://github.com/DBordeleau/hf-freeze", Issues = "https://github.com/DBordeleau/hf-freeze/issues" }
 dependencies = [
     "huggingface_hub>=1.0,<2",
     "libcst>=1.8",
