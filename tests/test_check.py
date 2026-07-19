@@ -33,11 +33,12 @@ def finding(
     trust: bool = False,
     trust_error: str | None = None,
     revision_error: str | None = None,
+    call: CallKind = CallKind.FROM_PRETRAINED,
 ) -> DependencyFinding:
     return DependencyFinding(
         repo_id=repo_id,
         repo_type=repo_type,
-        call_kind=CallKind.FROM_PRETRAINED,
+        call_kind=call,
         requested_revision=revision,
         source=SourceLocation("app.py", line, 4),
         unresolved_reason="dynamic repository ID" if repo_id is None else None,
@@ -47,14 +48,20 @@ def finding(
     )
 
 
-def dependency(*, sha: str = SHA, repo_id: str = "org/model") -> LockedDependency:
+def dependency(
+    *,
+    sha: str = SHA,
+    repo_id: str = "org/model",
+    kind: DependencyKind = DependencyKind.MODEL,
+    call: CallKind = CallKind.FROM_PRETRAINED,
+) -> LockedDependency:
     return LockedDependency(
         repo_id=repo_id,
         repo_type=RepoType.MODEL,
-        kind=DependencyKind.MODEL,
+        kind=kind,
         requested_revision="main",
         sha=sha,
-        sources=(LockedSource("app.py", 2, CallKind.FROM_PRETRAINED),),
+        sources=(LockedSource("app.py", 2, call),),
     )
 
 
@@ -71,6 +78,26 @@ def checked(
 
 def test_matching_immutable_source_and_lock_is_clean_including_remote_code() -> None:
     assert checked(findings=(finding(trust=True),)) == ()
+
+
+@pytest.mark.parametrize(
+    ("call", "kind"),
+    [
+        (CallKind.PIPELINE, DependencyKind.MODEL),
+        (CallKind.SENTENCE_TRANSFORMER, DependencyKind.MODEL),
+        (CallKind.PEFT_FROM_PRETRAINED, DependencyKind.ADAPTER),
+    ],
+)
+def test_new_call_kinds_have_offline_frozen_coverage(
+    call: CallKind, kind: DependencyKind
+) -> None:
+    assert (
+        checked(
+            findings=(finding(call=call),),
+            dependencies=(dependency(call=call, kind=kind),),
+        )
+        == ()
+    )
 
 
 @pytest.mark.parametrize(

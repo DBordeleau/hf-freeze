@@ -70,6 +70,127 @@ snapshot = snapshot_download("gpt2", revision="snapshot-v4")
     assert result.diagnostics == ()
 
 
+def test_discovers_pipeline_sentence_transformer_and_peft_calls(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "calls.py": """\
+PIPELINE_ID = "org/pipeline"
+SENTENCE_ID = "org/sentence"
+ADAPTER_ID = "org/adapter"
+
+pipeline("text-classification", model=PIPELINE_ID, trust_remote_code=True)
+SentenceTransformer(model_name_or_path=SENTENCE_ID, revision="sentence-v1")
+PeftModel.from_pretrained(base_model, ADAPTER_ID)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert [finding.call_kind for finding in findings] == [
+        CallKind.PIPELINE,
+        CallKind.SENTENCE_TRANSFORMER,
+        CallKind.PEFT_FROM_PRETRAINED,
+    ]
+    assert [finding.repo_id for finding in findings] == [
+        "org/pipeline",
+        "org/sentence",
+        "org/adapter",
+    ]
+    assert [finding.repo_type for finding in findings] == [RepoType.MODEL] * 3
+    assert findings[0].trust_remote_code is True
+    assert findings[1].requested_revision == "sentence-v1"
+
+
+def test_new_matchers_report_dynamic_ids_and_ignore_unsupported_pipeline_forms(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "dynamic.py": """\
+pipeline("text-classification")
+pipeline("text-classification", "org/positional")
+pipeline("text-classification", model=choose_model())
+SentenceTransformer(CONFIG["model"])
+PeftModel.from_pretrained(base_model, model_id=f"org/{adapter}")
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert [finding.call_kind for finding in findings] == [
+        CallKind.PIPELINE,
+        CallKind.SENTENCE_TRANSFORMER,
+        CallKind.PEFT_FROM_PRETRAINED,
+    ]
+    assert [finding.unresolved_reason for finding in findings] == [
+        "repository ID is returned by a function call",
+        "repository ID is a subscript expression",
+        "repository ID is an interpolated string",
+    ]
+
+
+def test_peft_precedes_generic_matcher_and_local_paths_remain_ignored(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "boundaries.py": """\
+peft.PeftModel.from_pretrained(base_model, model_id="org/adapter")
+PeftModel.from_pretrained(base_model, "./local-adapter")
+SentenceTransformer("../local-sentence")
+pipeline(model="C:\\\\models\\\\local")
+OtherPeftModel.from_pretrained(base_model, "org/not-an-adapter")
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert findings[0].call_kind is CallKind.PEFT_FROM_PRETRAINED
+    assert findings[0].repo_id == "org/adapter"
+    assert findings[1].call_kind is CallKind.FROM_PRETRAINED
+    assert findings[1].repo_id is None
+
+
+def test_generic_diffusers_calls_keep_revision_and_trust_extraction(
+    tmp_path: Path,
+) -> None:
+    # Matchers intentionally use terminal names without import resolution. This
+    # covers common Diffusers calls but can match project-defined names too.
+    project = write_project(
+        tmp_path,
+        {
+            "diffusers.py": """\
+MODEL_ID = "org/diffusion"
+DiffusionPipeline.from_pretrained(MODEL_ID, revision="diff-v1")
+diffusers.StableDiffusionPipeline.from_pretrained(
+    pretrained_model_name_or_path="org/stable", trust_remote_code=True
+)
+""",
+        },
+    )
+
+    findings = scan_path(project).findings
+
+    assert [finding.call_kind for finding in findings] == [
+        CallKind.FROM_PRETRAINED,
+        CallKind.FROM_PRETRAINED,
+    ]
+    assert [finding.repo_id for finding in findings] == [
+        "org/diffusion",
+        "org/stable",
+    ]
+    assert findings[0].requested_revision == "diff-v1"
+    assert findings[1].trust_remote_code is True
+
+
 def test_reports_dynamic_ids_and_ambiguous_constants(tmp_path: Path) -> None:
     project = write_project(
         tmp_path,

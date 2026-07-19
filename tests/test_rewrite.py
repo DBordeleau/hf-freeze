@@ -36,6 +36,9 @@ def dependency(
         CallKind.LOAD_DATASET: (RepoType.DATASET, DependencyKind.DATASET),
         CallKind.HF_HUB_DOWNLOAD: (RepoType.MODEL, DependencyKind.DIRECT_FILE),
         CallKind.SNAPSHOT_DOWNLOAD: (RepoType.MODEL, DependencyKind.SNAPSHOT),
+        CallKind.PIPELINE: (RepoType.MODEL, DependencyKind.MODEL),
+        CallKind.SENTENCE_TRANSFORMER: (RepoType.MODEL, DependencyKind.MODEL),
+        CallKind.PEFT_FROM_PRETRAINED: (RepoType.MODEL, DependencyKind.ADAPTER),
     }
     repo_type, kind = kinds[call]
     return LockedDependency(
@@ -92,6 +95,68 @@ def test_insertion_preserves_complete_source(
     assert not plan.skipped
     assert len(plan.changes) == 1
     assert plan.changes[0].after.decode() == expected
+    assert path.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize(
+    ("call", "source", "expected"),
+    [
+        (
+            CallKind.PIPELINE,
+            'pipeline("text-classification", model="org/model")\n',
+            f'pipeline("text-classification", model="org/model", revision="{SHA}")\n',
+        ),
+        (
+            CallKind.SENTENCE_TRANSFORMER,
+            'SentenceTransformer("org/model", revision="floating")\n',
+            f'SentenceTransformer("org/model", revision="{SHA}")\n',
+        ),
+        (
+            CallKind.PEFT_FROM_PRETRAINED,
+            'PeftModel.from_pretrained(base_model, "org/model")\n',
+            f'PeftModel.from_pretrained(base_model, "org/model", revision="{SHA}")\n',
+        ),
+    ],
+)
+def test_new_call_kinds_insert_or_replace_and_are_idempotent(
+    call: CallKind, source: str, expected: str, tmp_path: Path
+) -> None:
+    locked = dependency(call=call)
+    path, plan = plan_source(tmp_path, source, locked)
+
+    assert not plan.skipped
+    assert plan.changes[0].after.decode() == expected
+    path.write_bytes(plan.changes[0].after)
+
+    second = plan_rewrites(tmp_path, Lockfile(1, (locked,)), scan_path(tmp_path))
+    assert not second.changes and not second.skipped
+    assert len(second.noops) == 1
+
+
+@pytest.mark.parametrize(
+    ("call", "source"),
+    [
+        (
+            CallKind.PIPELINE,
+            'pipeline(model="org/model", revision=REVISION)\n',
+        ),
+        (
+            CallKind.SENTENCE_TRANSFORMER,
+            'SentenceTransformer("org/model", revision=REVISION)\n',
+        ),
+        (
+            CallKind.PEFT_FROM_PRETRAINED,
+            'PeftModel.from_pretrained(base_model, "org/model", revision=REVISION)\n',
+        ),
+    ],
+)
+def test_new_call_kinds_do_not_overwrite_dynamic_revisions(
+    call: CallKind, source: str, tmp_path: Path
+) -> None:
+    path, plan = plan_source(tmp_path, source, dependency(call=call))
+
+    assert not plan.changes
+    assert any("not a direct string literal" in item.reason for item in plan.skipped)
     assert path.read_text(encoding="utf-8") == source
 
 

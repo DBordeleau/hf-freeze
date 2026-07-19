@@ -11,6 +11,9 @@ class CallKind(str, Enum):
     LOAD_DATASET = "load_dataset"
     HF_HUB_DOWNLOAD = "hf_hub_download"
     SNAPSHOT_DOWNLOAD = "snapshot_download"
+    PIPELINE = "pipeline"
+    SENTENCE_TRANSFORMER = "sentence_transformer"
+    PEFT_FROM_PRETRAINED = "peft_from_pretrained"
 
 
 class RepoType(str, Enum):
@@ -27,6 +30,7 @@ class DependencyKind(str, Enum):
     DATASET = "dataset"
     DIRECT_FILE = "direct_file"
     SNAPSHOT = "snapshot"
+    ADAPTER = "adapter"
 
 
 CALL_KIND_TO_DEPENDENCY_KIND = {
@@ -34,6 +38,9 @@ CALL_KIND_TO_DEPENDENCY_KIND = {
     CallKind.LOAD_DATASET: DependencyKind.DATASET,
     CallKind.HF_HUB_DOWNLOAD: DependencyKind.DIRECT_FILE,
     CallKind.SNAPSHOT_DOWNLOAD: DependencyKind.SNAPSHOT,
+    CallKind.PIPELINE: DependencyKind.MODEL,
+    CallKind.SENTENCE_TRANSFORMER: DependencyKind.MODEL,
+    CallKind.PEFT_FROM_PRETRAINED: DependencyKind.ADAPTER,
 }
 
 

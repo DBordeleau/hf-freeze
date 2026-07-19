@@ -17,6 +17,7 @@ from hf_freeze.lockfile import (
 from hf_freeze.models import (
     CallKind,
     DependencyFinding,
+    DependencyKind,
     RepoType,
     ScanResult,
     SourceLocation,
@@ -72,6 +73,35 @@ def test_resolution_merges_sources_and_deduplicates_across_kinds() -> None:
     ]
     assert [source.line for source in lockfile.dependencies[1].sources] == [1, 2]
     assert resolver.calls.count(("org/repo", RepoType.MODEL, "main")) == 1
+
+
+def test_new_call_kinds_round_trip_in_schema_v1_with_adapter_classification() -> None:
+    result = ScanResult(
+        findings=(
+            finding("org/pipeline", CallKind.PIPELINE),
+            finding("org/sentence", CallKind.SENTENCE_TRANSFORMER),
+            finding("org/adapter", CallKind.PEFT_FROM_PRETRAINED),
+        ),
+        diagnostics=(),
+    )
+
+    lockfile = resolve_lockfile(result, FakeResolver())
+    reparsed = parse_lockfile(serialize_lockfile(lockfile))
+
+    assert reparsed == lockfile
+    assert [(item.repo_type, item.kind) for item in lockfile.dependencies] == [
+        (RepoType.MODEL, DependencyKind.ADAPTER),
+        (RepoType.MODEL, DependencyKind.MODEL),
+        (RepoType.MODEL, DependencyKind.MODEL),
+    ]
+    calls = sorted(
+        source.call for item in reparsed.dependencies for source in item.sources
+    )
+    assert calls == [
+        CallKind.PEFT_FROM_PRETRAINED,
+        CallKind.PIPELINE,
+        CallKind.SENTENCE_TRANSFORMER,
+    ]
 
 
 @pytest.mark.parametrize(

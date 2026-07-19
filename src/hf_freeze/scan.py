@@ -44,6 +44,7 @@ class CallSpec:
     kind: CallKind
     repo_type: RepoType
     keyword_names: tuple[str, ...]
+    positional_index: int | None = 0
 
 
 class _ConstantCollector(cst.CSTVisitor):
@@ -83,7 +84,11 @@ class _FindingVisitor(cst.CSTVisitor):
         if spec is None:
             return
 
-        repo_expression = _find_argument(node, spec.keyword_names)
+        repo_expression = _find_argument(
+            node, spec.keyword_names, positional_index=spec.positional_index
+        )
+        if spec.kind is CallKind.PIPELINE and repo_expression is None:
+            return
         repo_id, unresolved_reason = _resolve_repo_id(
             repo_expression, self._resolve_string_name
         )
@@ -224,12 +229,48 @@ def match_call(function: cst.BaseExpression) -> CallSpec | None:
         return CallSpec(CallKind.HF_HUB_DOWNLOAD, RepoType.MODEL, ("repo_id",))
     if name == "snapshot_download":
         return CallSpec(CallKind.SNAPSHOT_DOWNLOAD, RepoType.MODEL, ("repo_id",))
+
+    # These boundaries intentionally use terminal names without import resolution.
+    # A project-defined object with the same terminal name can therefore be a false
+    # positive; keeping this conservative rule explicit avoids guessing provenance.
+    if (
+        name == "from_pretrained"
+        and isinstance(function, cst.Attribute)
+        and _terminal_name(function.value) == "PeftModel"
+    ):
+        return CallSpec(
+            CallKind.PEFT_FROM_PRETRAINED,
+            RepoType.MODEL,
+            ("model_id",),
+            positional_index=1,
+        )
+    if name == "pipeline":
+        return CallSpec(
+            CallKind.PIPELINE,
+            RepoType.MODEL,
+            ("model",),
+            positional_index=None,
+        )
+    if name == "SentenceTransformer":
+        return CallSpec(
+            CallKind.SENTENCE_TRANSFORMER,
+            RepoType.MODEL,
+            ("model_name_or_path",),
+        )
     if name == "from_pretrained" and isinstance(function, cst.Attribute):
         return CallSpec(
             CallKind.FROM_PRETRAINED,
             RepoType.MODEL,
             ("pretrained_model_name_or_path", "model_name_or_path"),
         )
+    return None
+
+
+def _terminal_name(expression: cst.BaseExpression) -> str | None:
+    if isinstance(expression, cst.Name):
+        return expression.value
+    if isinstance(expression, cst.Attribute):
+        return expression.attr.value
     return None
 
 
