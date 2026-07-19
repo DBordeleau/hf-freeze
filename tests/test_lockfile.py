@@ -18,10 +18,16 @@ from hf_freeze.models import (
     CallKind,
     DependencyFinding,
     DependencyKind,
+    LockedDependency,
+    LockedSource,
+    Lockfile,
     RepoType,
     ScanResult,
     SourceLocation,
 )
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
 
 
 class FakeResolver:
@@ -49,6 +55,22 @@ def finding(
         requested_revision=revision,
         source=SourceLocation(path, line, 0),
         unresolved_reason="dynamic" if repo_id is None else None,
+    )
+
+
+def locked_dependency(
+    *,
+    requested_revision: str = "main",
+    sha: str = SHA,
+    sources: tuple[LockedSource, ...] = (),
+) -> LockedDependency:
+    return LockedDependency(
+        "org/repo",
+        RepoType.MODEL,
+        DependencyKind.MODEL,
+        requested_revision,
+        sha,
+        sources,
     )
 
 
@@ -124,6 +146,121 @@ def test_invalid_findings_abort_before_resolution(
         resolve_lockfile(ScanResult(findings=findings, diagnostics=()), resolver)
 
     assert resolver.calls == []
+
+
+def test_matching_pinned_sha_preserves_tracking_revision_and_rebuilds_sources() -> None:
+    existing = Lockfile(
+        1,
+        (
+            locked_dependency(
+                sources=(LockedSource("old.py", 20, CallKind.FROM_PRETRAINED),),
+            ),
+        ),
+    )
+    result = ScanResult(
+        findings=(
+            finding(
+                "org/repo",
+                CallKind.FROM_PRETRAINED,
+                path="new.py",
+                line=2,
+                revision=SHA,
+            ),
+            finding(
+                "org/repo",
+                CallKind.PIPELINE,
+                path="new.py",
+                line=8,
+                revision=SHA,
+            ),
+        ),
+        diagnostics=(),
+    )
+    resolver = FakeResolver()
+
+    lockfile = resolve_lockfile(result, resolver, existing_lockfile=existing)
+
+    assert lockfile.dependencies[0].requested_revision == "main"
+    assert lockfile.dependencies[0].sha == SHA
+    assert lockfile.dependencies[0].sources == (
+        LockedSource("new.py", 2, CallKind.FROM_PRETRAINED),
+        LockedSource("new.py", 8, CallKind.PIPELINE),
+    )
+    assert resolver.calls == []
+
+
+def test_different_pinned_sha_fails_before_resolution() -> None:
+    existing = Lockfile(1, (locked_dependency(),))
+    resolver = FakeResolver()
+
+    with pytest.raises(
+        LockValidationError,
+        match=rf"org/repo.*{OTHER_SHA}.*{SHA}",
+    ):
+        resolve_lockfile(
+            ScanResult(
+                findings=(
+                    finding(
+                        "org/repo",
+                        CallKind.FROM_PRETRAINED,
+                        revision=OTHER_SHA,
+                    ),
+                ),
+                diagnostics=(),
+            ),
+            resolver,
+            existing_lockfile=existing,
+        )
+
+    assert resolver.calls == []
+
+
+def test_duplicate_existing_identity_fails_instead_of_choosing_an_entry() -> None:
+    existing = Lockfile(
+        1,
+        (locked_dependency(), locked_dependency(requested_revision="v1")),
+    )
+    resolver = FakeResolver()
+
+    with pytest.raises(LockValidationError, match="multiple entries.*org/repo"):
+        resolve_lockfile(
+            ScanResult(
+                findings=(
+                    finding(
+                        "org/repo",
+                        CallKind.FROM_PRETRAINED,
+                        revision=SHA,
+                    ),
+                ),
+                diagnostics=(),
+            ),
+            resolver,
+            existing_lockfile=existing,
+        )
+
+    assert resolver.calls == []
+
+
+def test_first_exact_sha_lock_retains_normal_resolution_behavior() -> None:
+    resolver = FakeResolver()
+
+    lockfile = resolve_lockfile(
+        ScanResult(
+            findings=(
+                finding(
+                    "org/repo",
+                    CallKind.FROM_PRETRAINED,
+                    revision=SHA,
+                ),
+            ),
+            diagnostics=(),
+        ),
+        resolver,
+    )
+
+    assert resolver.calls == [("org/repo", RepoType.MODEL, SHA)]
+    assert lockfile.dependencies[0].requested_revision == SHA
+    assert lockfile.dependencies[0].sha == f"sha-org/repo-{SHA}"
 
 
 def test_serialization_is_canonical_and_round_trips() -> None:

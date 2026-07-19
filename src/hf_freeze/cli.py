@@ -90,9 +90,12 @@ def lock(path: Path = typer.Argument(Path("."))) -> None:
 
     destination = (path if path.is_dir() else path.parent) / "hf.lock"
     try:
-        if destination.exists():
-            read_lockfile(destination)
-        lockfile = resolve_lockfile(result, HfHubResolver())
+        existing_lockfile = read_lockfile(destination) if destination.exists() else None
+        lockfile = resolve_lockfile(
+            result,
+            HfHubResolver(),
+            existing_lockfile=existing_lockfile,
+        )
         write_lockfile(destination, lockfile)
     except (LockError, HubResolutionError, OSError) as error:
         typer.echo(f"Error: {error}", err=True)

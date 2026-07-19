@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -22,6 +23,8 @@ from hf_freeze.models import (
 )
 
 SCHEMA_VERSION = 1
+_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
+_Identity = tuple[RepoType, str, DependencyKind]
 
 
 class LockError(Exception):
@@ -36,7 +39,11 @@ class LockfileFormatError(LockError):
     """Lockfile input is malformed or uses an unsupported version."""
 
 
-def resolve_lockfile(scan_result: ScanResult, resolver: HubResolver) -> Lockfile:
+def resolve_lockfile(
+    scan_result: ScanResult,
+    resolver: HubResolver,
+    existing_lockfile: Lockfile | None = None,
+) -> Lockfile:
     """Validate findings, deduplicate resolution calls, and build a lockfile."""
 
     if scan_result.diagnostics:
@@ -45,10 +52,7 @@ def resolve_lockfile(scan_result: ScanResult, resolver: HubResolver) -> Lockfile
         )
         raise LockValidationError(f"scan failed for: {paths}")
 
-    grouped: dict[
-        tuple[RepoType, str, DependencyKind],
-        tuple[str, set[LockedSource]],
-    ] = {}
+    grouped: dict[_Identity, tuple[str, set[LockedSource]]] = {}
     unresolved: list[DependencyFinding] = []
     for finding in scan_result.findings:
         if (
@@ -91,28 +95,72 @@ def resolve_lockfile(scan_result: ScanResult, resolver: HubResolver) -> Lockfile
         )
         raise LockValidationError(f"unresolved Hub dependencies at: {locations}")
 
+    existing = _existing_dependency_lookup(existing_lockfile)
+    preserved: dict[_Identity, LockedDependency] = {}
+    for identity, (revision, _) in grouped.items():
+        if not _COMMIT_SHA.fullmatch(revision):
+            continue
+        previous = existing.get(identity)
+        if previous is None:
+            continue
+        if revision != previous.sha:
+            repo_type, repo_id, kind = identity
+            raise LockValidationError(
+                f"pinned SHA mismatch for {repo_type.value} repository '{repo_id}' "
+                f"({kind.value}): source has '{revision}' but hf.lock has "
+                f"'{previous.sha}'"
+            )
+        preserved[identity] = previous
+
     resolved: dict[tuple[RepoType, str, str], str] = {}
     dependencies: list[LockedDependency] = []
-    for (repo_type, repo_id, kind), (revision, sources) in sorted(
+    for identity, (revision, sources) in sorted(
         grouped.items(),
         key=lambda item: (item[0][0].value, item[0][1], item[0][2].value),
     ):
-        resolution_key = (repo_type, repo_id, revision)
-        sha = resolved.get(resolution_key)
-        if sha is None:
-            sha = resolver.resolve(repo_id, repo_type, revision)
-            resolved[resolution_key] = sha
+        repo_type, repo_id, kind = identity
+        previous = preserved.get(identity)
+        if previous is None:
+            requested_revision = revision
+            resolution_key = (repo_type, repo_id, revision)
+            sha = resolved.get(resolution_key)
+            if sha is None:
+                sha = resolver.resolve(repo_id, repo_type, revision)
+                resolved[resolution_key] = sha
+        else:
+            requested_revision = previous.requested_revision
+            sha = previous.sha
         dependencies.append(
             LockedDependency(
                 repo_id=repo_id,
                 repo_type=repo_type,
                 kind=kind,
-                requested_revision=revision,
+                requested_revision=requested_revision,
                 sha=sha,
                 sources=tuple(sorted(sources, key=_source_key)),
             )
         )
     return Lockfile(version=SCHEMA_VERSION, dependencies=tuple(dependencies))
+
+
+def _existing_dependency_lookup(
+    lockfile: Lockfile | None,
+) -> dict[_Identity, LockedDependency]:
+    """Return an unambiguous identity lookup for an existing lockfile."""
+
+    existing: dict[_Identity, LockedDependency] = {}
+    if lockfile is None:
+        return existing
+    for dependency in sorted(lockfile.dependencies, key=_dependency_key):
+        identity = (dependency.repo_type, dependency.repo_id, dependency.kind)
+        if identity in existing:
+            repo_type, repo_id, kind = identity
+            raise LockValidationError(
+                f"hf.lock contains multiple entries for {repo_type.value} repository "
+                f"'{repo_id}' ({kind.value}); remove the duplicates before re-locking"
+            )
+        existing[identity] = dependency
+    return existing
 
 
 def lockfile_to_dict(lockfile: Lockfile) -> dict[str, object]:

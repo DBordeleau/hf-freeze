@@ -6,18 +6,24 @@ from typer.testing import CliRunner
 import hf_freeze.cli
 from hf_freeze.cli import app
 from hf_freeze.hub import HubResolutionError
+from hf_freeze.lockfile import read_lockfile
 from hf_freeze.models import RepoType
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
+SECOND_SHA = "1111111111111111111111111111111111111111"
 
 
 class FakeResolver:
     calls: list[tuple[str, RepoType, str]]
 
-    def __init__(self) -> None:
+    def __init__(self, shas: dict[str, str] | None = None) -> None:
         self.calls = []
+        self.shas = shas or {}
 
     def resolve(self, repo_id: str, repo_type: RepoType, revision: str) -> str:
         self.calls.append((repo_id, repo_type, revision))
-        return "0123456789abcdef"
+        return self.shas.get(repo_id, SHA)
 
 
 def test_lock_cli_writes_stable_lockfile_with_fake_resolver(
@@ -49,6 +55,78 @@ def test_lock_cli_writes_stable_lockfile_with_fake_resolver(
         ("org/constant", RepoType.MODEL, "constant-v2"),
         ("org/model", RepoType.MODEL, "main"),
     ]
+
+
+def test_lock_pin_relock_lifecycle_preserves_tracking_and_adds_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(
+        'AutoModel.from_pretrained("org/first", revision="main")\n',
+        encoding="utf-8",
+    )
+    resolver = FakeResolver({"org/first": SHA, "org/second": SECOND_SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["lock", str(tmp_path)])
+    first_lock = (tmp_path / "hf.lock").read_bytes()
+    pinned = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+    second = runner.invoke(app, ["lock", str(tmp_path)])
+
+    assert first.exit_code == pinned.exit_code == second.exit_code == 0
+    assert SHA in source.read_text(encoding="utf-8")
+    assert (tmp_path / "hf.lock").read_bytes() == first_lock
+    assert resolver.calls == [("org/first", RepoType.MODEL, "main")]
+
+    with source.open("a", encoding="utf-8", newline="") as stream:
+        stream.write('AutoModel.from_pretrained("org/second")\n')
+    third = runner.invoke(app, ["lock", str(tmp_path)])
+    lockfile = read_lockfile(tmp_path / "hf.lock")
+
+    assert third.exit_code == 0
+    assert [item.repo_id for item in lockfile.dependencies] == [
+        "org/first",
+        "org/second",
+    ]
+    assert (
+        lockfile.dependencies[0].requested_revision,
+        lockfile.dependencies[0].sha,
+    ) == ("main", SHA)
+    assert resolver.calls == [
+        ("org/first", RepoType.MODEL, "main"),
+        ("org/second", RepoType.MODEL, "main"),
+    ]
+
+
+def test_lock_pinned_sha_mismatch_is_actionable_and_preserves_lockfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(
+        'AutoModel.from_pretrained("org/model", revision="main")\n',
+        encoding="utf-8",
+    )
+    resolver = FakeResolver({"org/model": SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    assert runner.invoke(app, ["lock", str(tmp_path)]).exit_code == 0
+    assert runner.invoke(app, ["pin", str(tmp_path), "--write"]).exit_code == 0
+    destination = tmp_path / "hf.lock"
+    existing = destination.read_bytes()
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(SHA, OTHER_SHA),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["lock", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "org/model" in result.stderr
+    assert SHA in result.stderr and OTHER_SHA in result.stderr
+    assert destination.read_bytes() == existing
+    assert resolver.calls == [("org/model", RepoType.MODEL, "main")]
 
 
 @pytest.mark.parametrize(
