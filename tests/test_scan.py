@@ -33,6 +33,25 @@ def write_declared_project(
     return project, resolve_project_context(project)
 
 
+def write_environment_project(
+    tmp_path: Path,
+    source: str,
+) -> tuple[Path, object]:
+    project = write_project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.hf-freeze.dependencies.primary-model]\n"
+            "repo_id = 'org/model'\n"
+            "repo_type = 'model'\n"
+            "revision = 'stable'\n\n"
+            "[tool.hf-freeze.bindings.environment]\n"
+            "MODEL_ID = 'primary-model'\n",
+            "app.py": source,
+        },
+    )
+    return project, resolve_project_context(project)
+
+
 def test_dependency_directive_resolves_dynamic_call_and_tracking_revision(
     tmp_path: Path,
 ) -> None:
@@ -55,6 +74,96 @@ def test_dependency_directive_resolves_dynamic_call_and_tracking_revision(
         ("org/model", RepoType.MODEL, "stable"),
         ("org/model", RepoType.MODEL, "stable"),
     ]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        'os.environ["MODEL_ID"]',
+        'os.environ.get("MODEL_ID")',
+        'os.getenv("MODEL_ID")',
+        'os.getenv("MODEL_ID", "org/fallback")',
+        'os.getenv("MODEL_ID", choose_fallback())',
+    ],
+)
+@pytest.mark.parametrize("assigned", [False, True])
+def test_environment_bindings_resolve_each_accepted_expression(
+    tmp_path: Path, expression: str, assigned: bool
+) -> None:
+    source = (
+        f"model_id = {expression}\nAutoModel.from_pretrained(model_id)\n"
+        if assigned
+        else f"AutoModel.from_pretrained({expression})\n"
+    )
+    project, context = write_environment_project(tmp_path, source)
+
+    result = scan_path(project, context=context)
+
+    assert result.diagnostics == ()
+    finding = result.findings[0]
+    assert (finding.repo_id, finding.repo_type, finding.requested_revision) == (
+        "org/model",
+        RepoType.MODEL,
+        "stable",
+    )
+
+
+@pytest.mark.parametrize("variable", ["MODEL_ID", "UNBOUND"])
+def test_environment_expression_accepts_matching_or_fallback_directive(
+    tmp_path: Path, variable: str
+) -> None:
+    project, context = write_environment_project(
+        tmp_path,
+        "# hf-freeze: dependency=primary-model\n"
+        f'AutoModel.from_pretrained(os.getenv("{variable}"))\n',
+    )
+
+    result = scan_path(project, context=context)
+
+    assert result.diagnostics == ()
+    assert result.findings[0].repo_id == "org/model"
+
+
+def test_environment_subscript_tuple_key_is_not_recognized(tmp_path: Path) -> None:
+    project, context = write_environment_project(
+        tmp_path, 'AutoModel.from_pretrained(os.environ["MODEL_ID",])\n'
+    )
+
+    result = scan_path(project, context=context)
+
+    assert result.findings[0].repo_id is None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'model_id = os.getenv("MODEL_ID")\nmodel_id = choose()\n'
+        "AutoModel.from_pretrained(model_id)\n",
+        'model_id = os.getenv("MODEL_ID")\nalias = model_id\n'
+        "AutoModel.from_pretrained(alias)\n",
+        'model_id, other = os.getenv("MODEL_ID"), None\n'
+        "AutoModel.from_pretrained(model_id)\n",
+        'first = second = os.getenv("MODEL_ID")\nAutoModel.from_pretrained(first)\n',
+        'AutoModel.from_pretrained(model_id)\nmodel_id = os.getenv("MODEL_ID")\n',
+        'model_id = os.getenv("MODEL_ID")\n\ndef load():\n'
+        "    AutoModel.from_pretrained(model_id)\n",
+    ],
+)
+def test_ambiguous_alias_and_cross_scope_environment_flow_stays_unresolved(
+    tmp_path: Path, source: str
+) -> None:
+    project, context = write_environment_project(tmp_path, source)
+
+    result = scan_path(project, context=context)
+
+    if result.findings:
+        assert result.findings[0].repo_id is None
+        assert "unambiguous string assignment" in result.findings[0].unresolved_reason
+    else:
+        assert any(
+            item.code == "AMBIGUOUS_ENVIRONMENT_REFERENCE"
+            for item in result.diagnostics
+        )
 
 
 @pytest.mark.parametrize(
@@ -452,15 +561,16 @@ snapshot_download(repo_id=MODEL_ID)
         },
     )
 
-    findings = scan_path(project).findings
+    result = scan_path(project)
+    findings = result.findings
 
-    assert [finding.repo_id for finding in findings] == [None, None, None, None]
+    assert [finding.repo_id for finding in findings] == [None, None, None]
     assert [finding.unresolved_reason for finding in findings] == [
-        "repository ID is a subscript expression",
         "repository ID is an interpolated string",
         "repository ID is returned by a function call",
         "repository ID name 'MODEL_ID' does not have one unambiguous string assignment",
     ]
+    assert result.diagnostics[0].code == "MISSING_ENVIRONMENT_BINDING"
 
 
 def test_constant_resolution_respects_function_scopes(tmp_path: Path) -> None:

@@ -48,14 +48,24 @@ class CallSpec:
     positional_index: int | None = 0
 
 
+@dataclass(frozen=True)
+class _EnvironmentReference:
+    """A narrow, committed-config-only environment lookup fact."""
+
+    name: str
+    fallback: str | None = None
+
+
 class _ConstantCollector(cst.CSTVisitor):
     """Record literal values for simple binding nodes."""
 
     def __init__(self) -> None:
-        self.values: dict[int, str | bool | None] = {}
+        self.values: dict[int, str | bool | _EnvironmentReference | None] = {}
 
     def visit_Assign(self, node: cst.Assign) -> None:
         value = _literal_value(node.value)
+        if value is None and len(node.targets) == 1:
+            value = _environment_reference(node.value)
         for target in node.targets:
             if isinstance(target.target, cst.Name):
                 self.values[id(target.target)] = value
@@ -63,6 +73,8 @@ class _ConstantCollector(cst.CSTVisitor):
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         if isinstance(node.target, cst.Name):
             value = _literal_value(node.value) if node.value is not None else None
+            if value is None and node.value is not None:
+                value = _environment_reference(node.value)
             self.values[id(node.target)] = value
 
     def visit_AugAssign(self, node: cst.AugAssign) -> None:
@@ -105,12 +117,17 @@ class _FindingVisitor(cst.CSTVisitor):
     def __init__(
         self,
         display_path: str,
-        binding_values: dict[int, str | bool | None],
+        binding_values: dict[int, str | bool | _EnvironmentReference | None],
         directives: dict[int, DeclaredDependency],
+        dependencies: tuple[DeclaredDependency, ...],
+        environment_bindings: tuple[tuple[str, str], ...],
     ) -> None:
         self.display_path = display_path
         self.binding_values = binding_values
         self.directives = directives
+        self.declarations = {item.name: item for item in dependencies}
+        self.environment_bindings = dict(environment_bindings)
+        self.used_declarations: set[str] = set()
         self.findings: list[DependencyFinding] = []
         self.diagnostics: list[ScanDiagnostic] = []
 
@@ -119,13 +136,13 @@ class _FindingVisitor(cst.CSTVisitor):
         if spec is None:
             return
 
-        declaration = self.directives.get(id(node))
+        directive = self.directives.get(id(node))
 
         repo_expression = _find_argument(
             node, spec.keyword_names, positional_index=spec.positional_index
         )
         if (
-            declaration is None
+            directive is None
             and spec.kind
             in {
                 CallKind.PIPELINE,
@@ -134,9 +151,54 @@ class _FindingVisitor(cst.CSTVisitor):
             and (repo_expression is None)
         ):
             return
-        repo_id, unresolved_reason = _resolve_repo_id(
-            repo_expression, self._resolve_string_name
+        repo_id, environment, unresolved_reason = _resolve_repo_reference(
+            repo_expression,
+            self._resolve_string_name,
+            self._resolve_environment_name,
         )
+        if (
+            directive is None
+            and environment is None
+            and repo_id is None
+            and isinstance(repo_expression, cst.Name)
+        ):
+            environment_problem = self._environment_name_problem(repo_expression)
+            if environment_problem is not None:
+                self._add_error(
+                    node, environment_problem, "AMBIGUOUS_ENVIRONMENT_REFERENCE"
+                )
+                return
+        environment_declaration = None
+        if environment is not None:
+            target = self.environment_bindings.get(environment.name)
+            if target is not None:
+                environment_declaration = self.declarations[target]
+                self.used_declarations.add(environment_declaration.name)
+            elif directive is None:
+                self._add_error(
+                    node,
+                    _missing_environment_binding_reason(environment),
+                    "MISSING_ENVIRONMENT_BINDING",
+                )
+                return
+
+        if (
+            environment_declaration is not None
+            and directive is not None
+            and environment_declaration.name != directive.name
+        ):
+            position = self.get_metadata(PositionProvider, node).start
+            self.diagnostics.append(
+                ScanDiagnostic(
+                    SourceLocation(self.display_path, position.line, position.column),
+                    f"environment variable {environment.name!r} binds dependency "
+                    f"{environment_declaration.name!r}, but the source directive "
+                    f"binds {directive.name!r}",
+                    code="BINDING_DIRECTIVE_CONFLICT",
+                )
+            )
+            return
+        declaration = environment_declaration or directive
         if (
             declaration is None
             and repo_id is not None
@@ -187,7 +249,11 @@ class _FindingVisitor(cst.CSTVisitor):
                             self.display_path, position.line, position.column
                         ),
                         conflict,
-                        code="DIRECTIVE_CONFLICT",
+                        code=(
+                            "ENVIRONMENT_BINDING_CONFLICT"
+                            if environment_declaration is not None
+                            else "DIRECTIVE_CONFLICT"
+                        ),
                     )
                 )
                 return
@@ -222,7 +288,9 @@ class _FindingVisitor(cst.CSTVisitor):
             )
         )
 
-    def _binding_value(self, expression: cst.Name) -> str | bool | None:
+    def _binding_value(
+        self, expression: cst.Name
+    ) -> str | bool | _EnvironmentReference | None:
         scope = self.get_metadata(ScopeProvider, expression)
         assignments = scope[expression.value]
         if len(assignments) != 1:
@@ -237,6 +305,77 @@ class _FindingVisitor(cst.CSTVisitor):
     def _resolve_boolean_name(self, expression: cst.Name) -> bool | None:
         value = self._binding_value(expression)
         return value if isinstance(value, bool) else None
+
+    def _resolve_environment_name(
+        self, expression: cst.Name
+    ) -> _EnvironmentReference | None:
+        scope = self.get_metadata(ScopeProvider, expression)
+        assignments = scope[expression.value]
+        if len(assignments) != 1:
+            return None
+        assignment = next(iter(assignments))
+        if assignment.scope is not scope:
+            return None
+        assignment_position = self.get_metadata(PositionProvider, assignment.node).start
+        use_position = self.get_metadata(PositionProvider, expression).start
+        if (assignment_position.line, assignment_position.column) >= (
+            use_position.line,
+            use_position.column,
+        ):
+            return None
+        value = self.binding_values.get(id(assignment.node))
+        return value if isinstance(value, _EnvironmentReference) else None
+
+    def _environment_name_problem(self, expression: cst.Name) -> str | None:
+        scope = self.get_metadata(ScopeProvider, expression)
+        assignments = scope[expression.value]
+        environment_assignments = [
+            assignment
+            for assignment in assignments
+            if isinstance(
+                self.binding_values.get(id(assignment.node)), _EnvironmentReference
+            )
+        ]
+        if not environment_assignments:
+            return None
+        same_scope = [
+            assignment
+            for assignment in environment_assignments
+            if assignment.scope is scope
+        ]
+        if not same_scope:
+            return (
+                f"repository ID name {expression.value!r} has an environment-reference "
+                "assignment outside the relevant lexical scope"
+            )
+        if len(assignments) != 1 or len(same_scope) != 1:
+            return (
+                f"repository ID name {expression.value!r} does not have exactly one "
+                "unambiguous environment-reference assignment in this lexical scope"
+            )
+        assignment_position = self.get_metadata(
+            PositionProvider, same_scope[0].node
+        ).start
+        use_position = self.get_metadata(PositionProvider, expression).start
+        if (assignment_position.line, assignment_position.column) >= (
+            use_position.line,
+            use_position.column,
+        ):
+            return (
+                f"repository ID name {expression.value!r} must be used after its "
+                "environment-reference assignment"
+            )
+        return None
+
+    def _add_error(self, node: cst.Call, message: str, code: str) -> None:
+        position = self.get_metadata(PositionProvider, node).start
+        self.diagnostics.append(
+            ScanDiagnostic(
+                SourceLocation(self.display_path, position.line, position.column),
+                message,
+                code=code,
+            )
+        )
 
 
 def scan_path(
@@ -255,7 +394,10 @@ def scan_path(
     used_declarations: set[str] = set()
     for source_path, display_path in iter_scoped_python_files(context, target):
         file_findings, file_diagnostics, used_names = _scan_file(
-            source_path, display_path, context.config.dependencies
+            source_path,
+            display_path,
+            context.config.dependencies,
+            context.config.environment_bindings,
         )
         findings.extend(file_findings)
         diagnostics.extend(file_diagnostics)
@@ -291,6 +433,7 @@ def _scan_file(
     source_path: Path,
     display_path: str,
     dependencies: tuple[DeclaredDependency, ...],
+    environment_bindings: tuple[tuple[str, str], ...],
 ) -> tuple[list[DependencyFinding], list[ScanDiagnostic], set[str]]:
     try:
         module = cst.parse_module(source_path.read_bytes())
@@ -328,10 +471,16 @@ def _scan_file(
     )
     collector = _ConstantCollector()
     wrapper.module.visit(collector)
-    visitor = _FindingVisitor(display_path, collector.values, directives)
+    visitor = _FindingVisitor(
+        display_path,
+        collector.values,
+        directives,
+        dependencies,
+        environment_bindings,
+    )
     wrapper.visit(visitor)
     diagnostics.extend(visitor.diagnostics)
-    return visitor.findings, diagnostics, used_names
+    return visitor.findings, diagnostics, used_names | visitor.used_declarations
 
 
 def _analyze_directives(
@@ -618,6 +767,61 @@ def _literal_value(expression: cst.BaseExpression) -> str | bool | None:
     return None
 
 
+def _environment_reference(
+    expression: cst.BaseExpression | None,
+) -> _EnvironmentReference | None:
+    """Recognize only the approved ``os.environ`` and ``os.getenv`` shapes."""
+
+    if isinstance(expression, cst.Subscript):
+        if not _is_os_environ(expression.value) or len(expression.slice) != 1:
+            return None
+        element = expression.slice[0]
+        if not (
+            isinstance(element.slice, cst.Index)
+            and element.comma is cst.MaybeSentinel.DEFAULT
+        ):
+            return None
+        name = _literal_string(element.slice.value)
+        return _EnvironmentReference(name) if name else None
+
+    if not isinstance(expression, cst.Call):
+        return None
+    arguments = expression.args
+    if any(argument.keyword is not None or argument.star for argument in arguments):
+        return None
+    if (
+        isinstance(expression.func, cst.Attribute)
+        and expression.func.attr.value == "get"
+        and _is_os_environ(expression.func.value)
+    ):
+        if len(arguments) != 1:
+            return None
+        name = _literal_string(arguments[0].value)
+        return _EnvironmentReference(name) if name else None
+    if not (
+        isinstance(expression.func, cst.Attribute)
+        and expression.func.attr.value == "getenv"
+        and isinstance(expression.func.value, cst.Name)
+        and expression.func.value.value == "os"
+        and len(arguments) in {1, 2}
+    ):
+        return None
+    name = _literal_string(arguments[0].value)
+    if not name:
+        return None
+    fallback = _literal_string(arguments[1].value) if len(arguments) == 2 else None
+    return _EnvironmentReference(name, fallback)
+
+
+def _is_os_environ(expression: cst.BaseExpression) -> bool:
+    return (
+        isinstance(expression, cst.Attribute)
+        and expression.attr.value == "environ"
+        and isinstance(expression.value, cst.Name)
+        and expression.value.value == "os"
+    )
+
+
 def _classify_data_files(expression: cst.BaseExpression | None) -> str:
     if expression is None:
         return "unknown"
@@ -751,24 +955,32 @@ def _resolve_revision(
     return None, reason
 
 
-def _resolve_repo_id(
+def _resolve_repo_reference(
     expression: cst.BaseExpression | None,
     resolve_name: Callable[[cst.Name], str | None],
-) -> tuple[str | None, str | None]:
+    resolve_environment_name: Callable[[cst.Name], _EnvironmentReference | None],
+) -> tuple[str | None, _EnvironmentReference | None, str | None]:
     if expression is None:
-        return None, "repository ID argument is missing"
+        return None, None, "repository ID argument is missing"
     literal = _literal_string(expression)
     if literal is not None:
-        return literal, None
+        return literal, None, None
     if isinstance(expression, cst.Name):
         value = resolve_name(expression)
         if value is not None:
-            return value, None
+            return value, None, None
+        environment = resolve_environment_name(expression)
+        if environment is not None:
+            return None, environment, None
         return (
+            None,
             None,
             f"repository ID name '{expression.value}' does not have one "
             "unambiguous string assignment",
         )
+    environment = _environment_reference(expression)
+    if environment is not None:
+        return None, environment, None
     if isinstance(expression, cst.Subscript):
         reason = "repository ID is a subscript expression"
     elif isinstance(expression, cst.FormattedString):
@@ -781,7 +993,20 @@ def _resolve_repo_id(
         reason = "repository ID is an attribute expression"
     else:
         reason = "repository ID is a dynamic expression"
-    return None, reason
+    return None, None, reason
+
+
+def _missing_environment_binding_reason(reference: _EnvironmentReference) -> str:
+    reason = (
+        f"environment variable {reference.name!r} has no committed binding in "
+        "[tool.hf-freeze.bindings.environment]"
+    )
+    if reference.fallback is not None:
+        reason += (
+            f"; literal fallback {reference.fallback!r} is not authoritative because "
+            "the runtime environment may override it"
+        )
+    return reason
 
 
 def _repo_type(

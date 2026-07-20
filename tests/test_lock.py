@@ -6,8 +6,15 @@ from typer.testing import CliRunner
 import hf_freeze.cli
 from hf_freeze.cli import app
 from hf_freeze.hub import HubResolutionError
-from hf_freeze.lockfile import read_lockfile
-from hf_freeze.models import RepoType
+from hf_freeze.lockfile import read_lockfile, write_lockfile
+from hf_freeze.models import (
+    CallKind,
+    DependencyKind,
+    LockedDependency,
+    LockedSource,
+    Lockfile,
+    RepoType,
+)
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
@@ -147,6 +154,184 @@ def test_annotation_bound_complete_lifecycle_preserves_dynamic_source(
         ("org/model", RepoType.MODEL, "stable"),
         ("org/model", RepoType.MODEL, "stable"),
     ]
+
+
+def test_environment_bound_complete_lifecycle_is_ambient_invariant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.hf-freeze.dependencies.primary-model]\n"
+        'repo_id = "org/model"\n'
+        'repo_type = "model"\n'
+        'revision = "stable"\n\n'
+        "[tool.hf-freeze.bindings.environment]\n"
+        'MODEL_ID = "primary-model"\n',
+        encoding="utf-8",
+    )
+    source = tmp_path / "app.py"
+    source.write_text(
+        "# repository selection stays dynamic\n"
+        'model_id = os.getenv("MODEL_ID", "org/fallback")\n'
+        "model = AutoModel.from_pretrained(\n"
+        "    model_id,  # preserve assignment and formatting\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    resolver = FakeResolver({"org/model": SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    monkeypatch.delenv("MODEL_ID", raising=False)
+    absent_scan = runner.invoke(app, ["scan", str(tmp_path)])
+    monkeypatch.setenv("MODEL_ID", "other/runtime-repository")
+    conflicting_scan = runner.invoke(app, ["scan", str(tmp_path)])
+    locked = runner.invoke(app, ["lock", str(tmp_path)])
+    pinned = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+    relocked = runner.invoke(app, ["lock", str(tmp_path)])
+    conflicting_check = runner.invoke(app, ["check", str(tmp_path), "--frozen"])
+    monkeypatch.delenv("MODEL_ID", raising=False)
+    absent_check = runner.invoke(app, ["check", str(tmp_path), "--frozen"])
+    monkeypatch.chdir(tmp_path)
+    diffed = runner.invoke(app, ["diff", "org/model"], catch_exceptions=False)
+    updated = runner.invoke(app, ["update", "org/model"], catch_exceptions=False)
+
+    assert absent_scan.exit_code == conflicting_scan.exit_code == 0
+    assert absent_scan.stdout == conflicting_scan.stdout
+    assert [item.exit_code for item in (locked, pinned, relocked)] == [0, 0, 0]
+    assert conflicting_check.exit_code == absent_check.exit_code == 0
+    assert conflicting_check.stdout == absent_check.stdout
+    assert diffed.exit_code == updated.exit_code == 0
+    text = source.read_text(encoding="utf-8")
+    assert "# repository selection stays dynamic" in text
+    assert 'model_id = os.getenv("MODEL_ID", "org/fallback")' in text
+    assert "model_id,  # preserve assignment and formatting" in text
+    assert f'revision="{SHA}"' in text
+    dependency = read_lockfile(tmp_path / "hf.lock").dependencies[0]
+    assert (dependency.requested_revision, dependency.sha) == ("stable", SHA)
+    assert resolver.calls == [
+        ("org/model", RepoType.MODEL, "stable"),
+        ("org/model", RepoType.MODEL, "stable"),
+        ("org/model", RepoType.MODEL, "stable"),
+    ]
+
+
+def test_environment_bound_lock_is_ambient_invariant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configuration = (
+        "[tool.hf-freeze.dependencies.primary-model]\n"
+        'repo_id = "org/model"\nrepo_type = "model"\nrevision = "stable"\n\n'
+        "[tool.hf-freeze.bindings.environment]\n"
+        'MODEL_ID = "primary-model"\n'
+    )
+    source = 'AutoModel.from_pretrained(os.getenv("MODEL_ID"))\n'
+    absent_project = tmp_path / "absent"
+    conflicting_project = tmp_path / "conflicting"
+    for project in (absent_project, conflicting_project):
+        project.mkdir()
+        (project / "pyproject.toml").write_text(configuration, encoding="utf-8")
+        (project / "app.py").write_text(source, encoding="utf-8")
+
+    absent_resolver = FakeResolver({"org/model": SHA})
+    conflicting_resolver = FakeResolver({"org/model": SHA})
+    resolvers = iter((absent_resolver, conflicting_resolver))
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: next(resolvers))
+    runner = CliRunner()
+
+    monkeypatch.delenv("MODEL_ID", raising=False)
+    absent = runner.invoke(app, ["lock", str(absent_project)])
+    monkeypatch.setenv("MODEL_ID", "other/runtime-repository")
+    conflicting = runner.invoke(app, ["lock", str(conflicting_project)])
+
+    assert absent.exit_code == conflicting.exit_code == 0
+    assert (absent_project / "hf.lock").read_bytes() == (
+        conflicting_project / "hf.lock"
+    ).read_bytes()
+    assert (
+        absent_resolver.calls
+        == conflicting_resolver.calls
+        == [("org/model", RepoType.MODEL, "stable")]
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    [
+        ("missing", "MISSING_ENVIRONMENT_BINDING"),
+        ("ambiguous", "AMBIGUOUS_ENVIRONMENT_REFERENCE"),
+        ("incompatible", "ENVIRONMENT_BINDING_CONFLICT"),
+        ("directive", "BINDING_DIRECTIVE_CONFLICT"),
+    ],
+)
+def test_environment_binding_failures_prevent_hub_lock_and_source_writes(
+    failure: str,
+    expected_code: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_type = "dataset" if failure == "incompatible" else "model"
+    configuration = (
+        "[tool.hf-freeze.dependencies.primary-model]\n"
+        f'repo_id = "org/model"\nrepo_type = "{repo_type}"\nrevision = "main"\n'
+    )
+    if failure != "missing":
+        configuration += (
+            '\n[tool.hf-freeze.bindings.environment]\nMODEL_ID = "primary-model"\n'
+        )
+    source = 'AutoModel.from_pretrained(os.getenv("UNBOUND", "org/fallback"))\n'
+    if failure == "ambiguous":
+        source = (
+            'model_id = os.getenv("MODEL_ID")\nmodel_id = choose()\n'
+            "AutoModel.from_pretrained(model_id)\n"
+        )
+    elif failure in {"incompatible", "directive"}:
+        source = 'AutoModel.from_pretrained(os.getenv("MODEL_ID"))\n'
+    if failure == "directive":
+        configuration = configuration.replace(
+            "[tool.hf-freeze.bindings.environment]",
+            "[tool.hf-freeze.dependencies.other-model]\n"
+            'repo_id = "org/other"\nrepo_type = "model"\nrevision = "main"\n\n'
+            "[tool.hf-freeze.bindings.environment]",
+        )
+        source = "# hf-freeze: dependency=other-model\n" + source
+    (tmp_path / "pyproject.toml").write_text(configuration, encoding="utf-8")
+    source_path = tmp_path / "app.py"
+    source_path.write_text(
+        'AutoModel.from_pretrained("org/static")\n' + source, encoding="utf-8"
+    )
+    destination = tmp_path / "hf.lock"
+    write_lockfile(
+        destination,
+        Lockfile(
+            1,
+            (
+                LockedDependency(
+                    "org/static",
+                    RepoType.MODEL,
+                    DependencyKind.MODEL,
+                    "main",
+                    SHA,
+                    (LockedSource("app.py", 1, CallKind.FROM_PRETRAINED),),
+                ),
+            ),
+        ),
+    )
+    original_lock = destination.read_bytes()
+    original_source = source_path.read_bytes()
+    resolver = FakeResolver()
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    locked = runner.invoke(app, ["lock", str(tmp_path)])
+    pinned = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+
+    assert locked.exit_code == pinned.exit_code == 1
+    assert expected_code in pinned.stderr
+    if failure == "missing":
+        assert "literal fallback 'org/fallback' is not authoritative" in pinned.stderr
+    assert resolver.calls == []
+    assert destination.read_bytes() == original_lock
+    assert source_path.read_bytes() == original_source
 
 
 def test_unused_declaration_warns_without_hub_resolution_or_lock_entry(
