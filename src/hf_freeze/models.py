@@ -23,6 +23,13 @@ class RepoType(str, Enum):
     DATASET = "dataset"
 
 
+class DiagnosticSeverity(str, Enum):
+    """Whether a scan diagnostic blocks lifecycle commands."""
+
+    ERROR = "error"
+    WARNING = "warning"
+
+
 class DependencyKind(str, Enum):
     """Dependency categories stored in schema-v1 lockfiles."""
 
@@ -74,6 +81,8 @@ class ScanDiagnostic:
 
     source: SourceLocation
     message: str
+    severity: DiagnosticSeverity = DiagnosticSeverity.ERROR
+    code: str = "SCAN_DIAGNOSTIC"
 
 
 @dataclass(frozen=True)

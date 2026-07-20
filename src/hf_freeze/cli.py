@@ -31,7 +31,12 @@ from hf_freeze.lockfile import (
     update_repository_entries,
     write_lockfile,
 )
-from hf_freeze.models import DependencyFinding, ScanDiagnostic, ScanResult
+from hf_freeze.models import (
+    DependencyFinding,
+    DiagnosticSeverity,
+    ScanDiagnostic,
+    ScanResult,
+)
 from hf_freeze.rewrite import apply_rewrite_plan, plan_rewrites
 from hf_freeze.scan import scan_path
 
@@ -68,7 +73,12 @@ def scan(path: Path | None = typer.Argument(None)) -> None:
     for entry in entries:
         location = f"{entry.source.path}:{entry.source.line}:{entry.source.column + 1}"
         if isinstance(entry, ScanDiagnostic):
-            typer.echo(f"{location}  {entry.message}")
+            severity = (
+                f"{entry.severity.value.upper()} {entry.code}  "
+                if entry.severity is DiagnosticSeverity.WARNING
+                else ""
+            )
+            typer.echo(f"{location}  {severity}{entry.message}")
         elif entry.repo_id is None:
             typer.echo(
                 f"{location}  {entry.call_kind.value}  unresolved: "
@@ -96,6 +106,7 @@ def lock(path: Path | None = typer.Argument(None)) -> None:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
     destination = _source_lock_path(context, requested_path)
+    _render_scan_warnings(result)
     try:
         existing_lockfile = read_lockfile(destination) if destination.exists() else None
         lockfile = resolve_lockfile(
@@ -242,6 +253,13 @@ def pin(
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
+    fatal_diagnostics = _fatal_scan_diagnostics(result)
+    if fatal_diagnostics:
+        for diagnostic in fatal_diagnostics:
+            _render_scan_error(diagnostic)
+        raise typer.Exit(code=1)
+    _render_scan_warnings(result)
+
     if context.config_path is None:
         root = requested_path if requested_path.is_dir() else requested_path.parent
         source_filter = (
@@ -325,8 +343,51 @@ def _unusable_lock_issues(
 ) -> tuple[CheckIssue, ...]:
     return (
         _lock_issue(code, message),
+        *(
+            CheckIssue(
+                IssueSeverity.WARNING
+                if diagnostic.severity is DiagnosticSeverity.WARNING
+                else IssueSeverity.ERROR,
+                diagnostic.code,
+                diagnostic.message,
+                "Remove the unused declaration or bind it to a source call."
+                if diagnostic.code == "UNUSED_DECLARATION"
+                else "Fix the source directive or file, then rerun the check.",
+                diagnostic.source,
+            )
+            for diagnostic in result.diagnostics
+        ),
         *check_remote_code_without_lock(result),
     )
+
+
+def _fatal_scan_diagnostics(result: ScanResult) -> tuple[ScanDiagnostic, ...]:
+    return tuple(
+        diagnostic
+        for diagnostic in result.diagnostics
+        if diagnostic.severity is DiagnosticSeverity.ERROR
+    )
+
+
+def _render_scan_warnings(result: ScanResult) -> None:
+    for diagnostic in result.diagnostics:
+        if diagnostic.severity is DiagnosticSeverity.WARNING:
+            location = (
+                f"{diagnostic.source.path}:{diagnostic.source.line}:"
+                f"{diagnostic.source.column + 1}"
+            )
+            typer.echo(
+                f"{location}  WARNING {diagnostic.code}  {diagnostic.message}",
+                err=True,
+            )
+
+
+def _render_scan_error(diagnostic: ScanDiagnostic) -> None:
+    location = (
+        f"{diagnostic.source.path}:{diagnostic.source.line}:"
+        f"{diagnostic.source.column + 1}"
+    )
+    typer.echo(f"{location}  ERROR {diagnostic.code}  {diagnostic.message}", err=True)
 
 
 def _render_check_issue(issue: CheckIssue) -> None:

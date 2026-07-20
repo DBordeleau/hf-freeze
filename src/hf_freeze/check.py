@@ -10,6 +10,7 @@ from hf_freeze.models import (
     CALL_KIND_TO_DEPENDENCY_KIND,
     DependencyFinding,
     DependencyKind,
+    DiagnosticSeverity,
     LockedDependency,
     Lockfile,
     RepoType,
@@ -61,10 +62,15 @@ def check_lockfile(
     issues: list[CheckIssue] = []
     for diagnostic in scan_result.diagnostics:
         issues.append(
-            _source_issue(
-                "SCAN_DIAGNOSTIC",
+            CheckIssue(
+                IssueSeverity.WARNING
+                if diagnostic.severity is DiagnosticSeverity.WARNING
+                else IssueSeverity.ERROR,
+                diagnostic.code,
                 diagnostic.message,
-                "Fix the source file so it can be scanned, then rerun the check.",
+                "Remove the unused declaration or bind it to a source call."
+                if diagnostic.code == "UNUSED_DECLARATION"
+                else "Fix the source directive or file, then rerun the check.",
                 diagnostic.source,
             )
         )

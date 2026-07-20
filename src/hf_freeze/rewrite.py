@@ -17,6 +17,7 @@ from hf_freeze.models import (
     CALL_KIND_TO_DEPENDENCY_KIND,
     CallKind,
     DependencyFinding,
+    DiagnosticSeverity,
     LockedDependency,
     LockedSource,
     Lockfile,
@@ -164,7 +165,9 @@ def plan_rewrites(
     unmatched: list[tuple[LockedDependency, LockedSource, str]] = []
     covered_findings: set[int] = set()
     diagnostics = {
-        diagnostic.source.path: diagnostic for diagnostic in scan_result.diagnostics
+        diagnostic.source.path: diagnostic
+        for diagnostic in scan_result.diagnostics
+        if diagnostic.severity is DiagnosticSeverity.ERROR
     }
 
     for dependency, source in locked:
@@ -280,6 +283,8 @@ def plan_rewrites(
                 )
             )
     for diagnostic in scan_result.diagnostics:
+        if diagnostic.severity is DiagnosticSeverity.WARNING:
+            continue
         if source_filter is None or diagnostic.source.path in source_filter:
             skipped.append(
                 SkippedTarget(

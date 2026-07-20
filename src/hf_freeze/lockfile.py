@@ -15,6 +15,7 @@ from hf_freeze.models import (
     CallKind,
     DependencyFinding,
     DependencyKind,
+    DiagnosticSeverity,
     LockedDependency,
     LockedSource,
     Lockfile,
@@ -100,11 +101,17 @@ def resolve_lockfile(
 ) -> Lockfile:
     """Validate findings, deduplicate resolution calls, and build a lockfile."""
 
-    if scan_result.diagnostics:
+    fatal_diagnostics = tuple(
+        diagnostic
+        for diagnostic in scan_result.diagnostics
+        if diagnostic.severity is DiagnosticSeverity.ERROR
+    )
+    if fatal_diagnostics:
         paths = ", ".join(
-            diagnostic.source.path for diagnostic in scan_result.diagnostics
+            f"{diagnostic.source.path}:{diagnostic.source.line}: {diagnostic.message}"
+            for diagnostic in fatal_diagnostics
         )
-        raise LockValidationError(f"scan failed for: {paths}")
+        raise LockValidationError(f"scan failed: {paths}")
 
     grouped: dict[_Identity, tuple[str, set[LockedSource]]] = {}
     unresolved: list[DependencyFinding] = []

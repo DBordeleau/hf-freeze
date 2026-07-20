@@ -99,6 +99,103 @@ def test_lock_pin_relock_lifecycle_preserves_tracking_and_adds_dependency(
     ]
 
 
+def test_annotation_bound_complete_lifecycle_preserves_dynamic_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.hf-freeze.dependencies.primary-model]\n"
+        'repo_id = "org/model"\n'
+        'repo_type = "model"\n'
+        'revision = "stable"\n',
+        encoding="utf-8",
+    )
+    source = tmp_path / "app.py"
+    source.write_text(
+        "# keep this comment\n"
+        "# hf-freeze: dependency=primary-model\n"
+        "model = AutoModel.from_pretrained(settings.model)\n",
+        encoding="utf-8",
+    )
+    resolver = FakeResolver({"org/model": SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    locked = runner.invoke(app, ["lock", str(tmp_path)])
+    pinned = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+    relocked = runner.invoke(app, ["lock", str(tmp_path)])
+    checked = runner.invoke(app, ["check", str(tmp_path), "--frozen"])
+    monkeypatch.chdir(tmp_path)
+    diffed = runner.invoke(app, ["diff", "org/model"], catch_exceptions=False)
+    updated = runner.invoke(app, ["update", "org/model"], catch_exceptions=False)
+
+    assert [item.exit_code for item in (locked, pinned, relocked, checked)] == [
+        0,
+        0,
+        0,
+        0,
+    ]
+    assert diffed.exit_code == updated.exit_code == 0
+    text = source.read_text(encoding="utf-8")
+    assert "# keep this comment" in text
+    assert "# hf-freeze: dependency=primary-model" in text
+    assert "settings.model" in text
+    assert f'revision="{SHA}"' in text
+    dependency = read_lockfile(tmp_path / "hf.lock").dependencies[0]
+    assert (dependency.requested_revision, dependency.sha) == ("stable", SHA)
+    assert resolver.calls == [
+        ("org/model", RepoType.MODEL, "stable"),
+        ("org/model", RepoType.MODEL, "stable"),
+        ("org/model", RepoType.MODEL, "stable"),
+    ]
+
+
+def test_unused_declaration_warns_without_hub_resolution_or_lock_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.hf-freeze.dependencies.unused]\n"
+        'repo_id = "org/model"\n'
+        'repo_type = "model"\n'
+        'revision = "main"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    resolver = FakeResolver()
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+
+    result = CliRunner().invoke(app, ["lock", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "WARNING UNUSED_DECLARATION" in result.stderr
+    assert read_lockfile(tmp_path / "hf.lock").dependencies == ()
+    assert resolver.calls == []
+
+
+def test_pin_fatal_directive_diagnostic_prevents_all_source_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "a.py"
+    second = tmp_path / "b.py"
+    first.write_text('AutoModel.from_pretrained("org/a")\n', encoding="utf-8")
+    second.write_text('AutoModel.from_pretrained("org/b")\n', encoding="utf-8")
+    resolver = FakeResolver({"org/a": SHA, "org/b": SECOND_SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+    assert runner.invoke(app, ["lock", str(tmp_path)]).exit_code == 0
+    before = first.read_bytes()
+    second.write_text(
+        '# hf-freeze dependency=broken\nAutoModel.from_pretrained("org/b")\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+
+    assert result.exit_code == 1
+    assert "ERROR MALFORMED_DIRECTIVE" in result.stderr
+    assert first.read_bytes() == before
+    assert SHA not in first.read_text(encoding="utf-8")
+
+
 def test_lock_pinned_sha_mismatch_is_actionable_and_preserves_lockfile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -144,6 +241,7 @@ def test_lock_pinned_sha_mismatch_is_actionable_and_preserves_lockfile(
         'AutoModel.from_pretrained("org/model", revision="   ")\n',
         'REV = ""\nAutoModel.from_pretrained("org/model", revision=REV)\n',
         'REV = "   "\nAutoModel.from_pretrained("org/model", revision=REV)\n',
+        '# hf-freeze dependency=broken\nAutoModel.from_pretrained("org/model")\n',
     ],
 )
 def test_lock_cli_failure_preserves_existing_file_without_network(

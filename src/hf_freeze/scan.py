@@ -14,6 +14,7 @@ from hf_freeze.config import (
     DEFAULT_EXCLUDED_DIRECTORIES as _DEFAULT_EXCLUDED_DIRECTORIES,
 )
 from hf_freeze.config import (
+    DeclaredDependency,
     ProjectConfig,
     ProjectContext,
     iter_scoped_python_files,
@@ -21,6 +22,7 @@ from hf_freeze.config import (
 from hf_freeze.models import (
     CallKind,
     DependencyFinding,
+    DiagnosticSeverity,
     RepoType,
     ScanDiagnostic,
     ScanResult,
@@ -30,6 +32,12 @@ from hf_freeze.models import (
 DEFAULT_EXCLUDED_DIRECTORIES = _DEFAULT_EXCLUDED_DIRECTORIES
 
 LOCAL_DATASET_BUILDERS = frozenset({"json", "parquet"})
+_DIRECTIVE_PREFIX = "hf-freeze"
+_DEPENDENCY_DIRECTIVE = re.compile(r"hf-freeze:\s*dependency=([A-Za-z0-9_-]+)\Z")
+_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
+_MALFORMED_DIRECTIVE = (
+    "malformed hf-freeze directive; expected '# hf-freeze: dependency=<name>'"
+)
 
 
 @dataclass(frozen=True)
@@ -62,34 +70,84 @@ class _ConstantCollector(cst.CSTVisitor):
             self.values[id(node.target)] = None
 
 
+class _SupportedCallCollector(cst.CSTVisitor):
+    """Collect calls recognized by the existing matcher within one statement."""
+
+    def __init__(self) -> None:
+        self.calls: list[cst.Call] = []
+
+    def visit_Call(self, node: cst.Call) -> None:
+        if match_call(node.func) is not None:
+            self.calls.append(node)
+
+
+class _StructureCollector(cst.CSTVisitor):
+    """Collect comments and simple statements with exact source positions."""
+
+    METADATA_DEPENDENCIES = (PositionProvider,)
+
+    def __init__(self) -> None:
+        self.comments: list[tuple[cst.Comment, int, int]] = []
+        self.statements: list[tuple[cst.SimpleStatementLine, int]] = []
+
+    def visit_Comment(self, node: cst.Comment) -> None:
+        position = self.get_metadata(PositionProvider, node).start
+        self.comments.append((node, position.line, position.column))
+
+    def visit_SimpleStatementLine(self, node: cst.SimpleStatementLine) -> None:
+        position = self.get_metadata(PositionProvider, node).start
+        self.statements.append((node, position.line))
+
+
 class _FindingVisitor(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (PositionProvider, ScopeProvider)
 
     def __init__(
-        self, display_path: str, binding_values: dict[int, str | bool | None]
+        self,
+        display_path: str,
+        binding_values: dict[int, str | bool | None],
+        directives: dict[int, DeclaredDependency],
     ) -> None:
         self.display_path = display_path
         self.binding_values = binding_values
+        self.directives = directives
         self.findings: list[DependencyFinding] = []
+        self.diagnostics: list[ScanDiagnostic] = []
 
     def visit_Call(self, node: cst.Call) -> None:
         spec = match_call(node.func)
         if spec is None:
             return
 
+        declaration = self.directives.get(id(node))
+
         repo_expression = _find_argument(
             node, spec.keyword_names, positional_index=spec.positional_index
         )
-        if spec.kind in {CallKind.PIPELINE, CallKind.SENTENCE_TRANSFORMER} and (
-            repo_expression is None
+        if (
+            declaration is None
+            and spec.kind
+            in {
+                CallKind.PIPELINE,
+                CallKind.SENTENCE_TRANSFORMER,
+            }
+            and (repo_expression is None)
         ):
             return
         repo_id, unresolved_reason = _resolve_repo_id(
             repo_expression, self._resolve_string_name
         )
-        if repo_id is not None and _is_obvious_local_path(repo_id):
+        if (
+            declaration is None
+            and repo_id is not None
+            and _is_obvious_local_path(repo_id)
+        ):
             return
-        if spec.kind is CallKind.LOAD_DATASET and repo_id in LOCAL_DATASET_BUILDERS:
+        if (
+            declaration is None
+            and spec.kind is CallKind.LOAD_DATASET
+            and repo_id in LOCAL_DATASET_BUILDERS
+        ):
             builder_name = repo_id
             data_files = _find_argument(node, ("data_files",), positional_index=None)
             data_files_kind = _classify_data_files(data_files)
@@ -110,6 +168,35 @@ class _FindingVisitor(cst.CSTVisitor):
         requested_revision, revision_unresolved_reason = _resolve_revision(
             revision_expression, self._resolve_string_name
         )
+        repo_type = _repo_type(node, spec.repo_type, self._resolve_string_name)
+        if declaration is not None:
+            conflict = _apply_declaration(
+                declaration,
+                spec.kind,
+                repo_id,
+                repo_type,
+                requested_revision,
+                revision_expression is not None,
+                revision_unresolved_reason,
+            )
+            if conflict is not None:
+                position = self.get_metadata(PositionProvider, node).start
+                self.diagnostics.append(
+                    ScanDiagnostic(
+                        SourceLocation(
+                            self.display_path, position.line, position.column
+                        ),
+                        conflict,
+                        code="DIRECTIVE_CONFLICT",
+                    )
+                )
+                return
+            repo_id = declaration.repo_id
+            repo_type = declaration.repo_type
+            unresolved_reason = None
+            if revision_expression is None:
+                requested_revision = declaration.revision
+            revision_unresolved_reason = None
         trust_expression = _find_argument(
             node, ("trust_remote_code",), positional_index=None
         )
@@ -120,7 +207,7 @@ class _FindingVisitor(cst.CSTVisitor):
         self.findings.append(
             DependencyFinding(
                 repo_id=repo_id,
-                repo_type=_repo_type(node, spec.repo_type, self._resolve_string_name),
+                repo_type=repo_type,
                 call_kind=spec.kind,
                 requested_revision=requested_revision,
                 source=SourceLocation(
@@ -165,11 +252,31 @@ def scan_path(
 
     findings: list[DependencyFinding] = []
     diagnostics: list[ScanDiagnostic] = []
+    used_declarations: set[str] = set()
     for source_path, display_path in iter_scoped_python_files(context, target):
-        file_findings, diagnostic = _scan_file(source_path, display_path)
+        file_findings, file_diagnostics, used_names = _scan_file(
+            source_path, display_path, context.config.dependencies
+        )
         findings.extend(file_findings)
-        if diagnostic is not None:
-            diagnostics.append(diagnostic)
+        diagnostics.extend(file_diagnostics)
+        used_declarations.update(used_names)
+
+    config_display_path = (
+        context.config_path.relative_to(context.root).as_posix()
+        if context.config_path is not None
+        else "pyproject.toml"
+    )
+    for declaration in context.config.dependencies:
+        if declaration.name not in used_declarations:
+            diagnostics.append(
+                ScanDiagnostic(
+                    SourceLocation(config_display_path, 1, 0),
+                    f"dependency {declaration.name!r} is declared but not used in "
+                    "scanned source",
+                    DiagnosticSeverity.WARNING,
+                    "UNUSED_DECLARATION",
+                )
+            )
 
     def location_key(item: DependencyFinding | ScanDiagnostic) -> tuple[str, int, int]:
         return (item.source.path, item.source.line, item.source.column)
@@ -181,32 +288,234 @@ def scan_path(
 
 
 def _scan_file(
-    source_path: Path, display_path: str
-) -> tuple[list[DependencyFinding], ScanDiagnostic | None]:
+    source_path: Path,
+    display_path: str,
+    dependencies: tuple[DeclaredDependency, ...],
+) -> tuple[list[DependencyFinding], list[ScanDiagnostic], set[str]]:
     try:
         module = cst.parse_module(source_path.read_bytes())
     except cst.ParserSyntaxError as error:
         message = " ".join(error.message.split())
-        return [], ScanDiagnostic(
-            source=SourceLocation(
-                path=display_path,
-                line=error.raw_line,
-                column=error.raw_column,
-            ),
-            message=f"parse error: {message}",
+        return (
+            [],
+            [
+                ScanDiagnostic(
+                    source=SourceLocation(
+                        path=display_path,
+                        line=error.raw_line,
+                        column=error.raw_column,
+                    ),
+                    message=f"parse error: {message}",
+                )
+            ],
+            set(),
         )
     except OSError as error:
-        return [], ScanDiagnostic(
-            source=SourceLocation(path=display_path, line=1, column=0),
-            message=f"read error: {error}",
+        return (
+            [],
+            [
+                ScanDiagnostic(
+                    source=SourceLocation(path=display_path, line=1, column=0),
+                    message=f"read error: {error}",
+                )
+            ],
+            set(),
         )
 
     wrapper = MetadataWrapper(module)
+    directives, diagnostics, used_names = _analyze_directives(
+        wrapper, display_path, dependencies
+    )
     collector = _ConstantCollector()
     wrapper.module.visit(collector)
-    visitor = _FindingVisitor(display_path, collector.values)
+    visitor = _FindingVisitor(display_path, collector.values, directives)
     wrapper.visit(visitor)
-    return visitor.findings, None
+    diagnostics.extend(visitor.diagnostics)
+    return visitor.findings, diagnostics, used_names
+
+
+def _analyze_directives(
+    wrapper: MetadataWrapper,
+    display_path: str,
+    dependencies: tuple[DeclaredDependency, ...],
+) -> tuple[
+    dict[int, DeclaredDependency],
+    list[ScanDiagnostic],
+    set[str],
+]:
+    """Attach canonical comments to exactly one supported call."""
+
+    structure = _StructureCollector()
+    wrapper.visit(structure)
+    source_lines = wrapper.module.code.splitlines()
+    comments = {
+        line: (node, column)
+        for node, line, column in structure.comments
+        if not source_lines[line - 1][:column].strip()
+    }
+    directive_comments = {
+        line: (node, column)
+        for node, line, column in structure.comments
+        if _is_directive_like(node.value)
+    }
+    declarations = {item.name: item for item in dependencies}
+    handled: set[int] = set()
+    bindings: dict[int, DeclaredDependency] = {}
+    diagnostics: list[ScanDiagnostic] = []
+    used_names: set[str] = set()
+
+    for statement, statement_line in structure.statements:
+        previous = statement_line - 1
+        if previous not in comments or previous not in directive_comments:
+            continue
+
+        block_directives: list[tuple[cst.Comment, int, int]] = []
+        line = previous
+        while line in comments:
+            comment, column = comments[line]
+            if line in directive_comments:
+                block_directives.append((comment, line, column))
+            line -= 1
+
+        call_collector = _SupportedCallCollector()
+        statement.visit(call_collector)
+        calls = call_collector.calls
+        handled.update(id(comment) for comment, _, _ in block_directives)
+
+        if len(block_directives) > 1:
+            diagnostics.append(
+                _directive_diagnostic(
+                    display_path,
+                    block_directives[0],
+                    "MULTIPLE_DIRECTIVES",
+                    "multiple hf-freeze directives are attached to one statement",
+                )
+            )
+            continue
+
+        record = block_directives[0]
+        comment = record[0]
+        match = _DEPENDENCY_DIRECTIVE.fullmatch(comment.value[1:].strip())
+        if match is None:
+            diagnostics.append(
+                _directive_diagnostic(
+                    display_path, record, "MALFORMED_DIRECTIVE", _MALFORMED_DIRECTIVE
+                )
+            )
+            continue
+        if len(calls) != 1:
+            diagnostics.append(
+                _directive_diagnostic(
+                    display_path,
+                    record,
+                    "DIRECTIVE_CALL_COUNT",
+                    "dependency directive must attach to a statement containing "
+                    f"exactly one supported Hub call; found {len(calls)}",
+                )
+            )
+            continue
+
+        name = match.group(1)
+        declaration = declarations.get(name)
+        if declaration is None:
+            diagnostics.append(
+                _directive_diagnostic(
+                    display_path,
+                    record,
+                    "UNKNOWN_DECLARATION",
+                    f"dependency directive references unknown declaration {name!r}",
+                )
+            )
+            continue
+        used_names.add(name)
+        call = calls[0]
+        bindings[id(call)] = declaration
+
+    for line, (comment, column) in sorted(directive_comments.items()):
+        if id(comment) in handled:
+            continue
+        record = (comment, line, column)
+        if _DEPENDENCY_DIRECTIVE.fullmatch(comment.value[1:].strip()) is None:
+            code, message = "MALFORMED_DIRECTIVE", _MALFORMED_DIRECTIVE
+        else:
+            code, message = (
+                "DETACHED_DIRECTIVE",
+                "dependency directive is detached; place it immediately above a "
+                "simple statement with exactly one supported Hub call",
+            )
+        diagnostics.append(_directive_diagnostic(display_path, record, code, message))
+    return bindings, diagnostics, used_names
+
+
+def _is_directive_like(comment: str) -> bool:
+    return comment[1:].strip().startswith(_DIRECTIVE_PREFIX)
+
+
+def _directive_diagnostic(
+    path: str,
+    record: tuple[cst.Comment, int, int],
+    code: str,
+    message: str,
+) -> ScanDiagnostic:
+    _, line, column = record
+    return ScanDiagnostic(SourceLocation(path, line, column), message, code=code)
+
+
+def _apply_declaration(
+    declaration: DeclaredDependency,
+    call_kind: CallKind,
+    repo_id: str | None,
+    repo_type: RepoType | None,
+    requested_revision: str | None,
+    has_revision: bool,
+    revision_error: str | None,
+) -> str | None:
+    """Return a deterministic conflict message, if committed inputs disagree."""
+
+    if repo_type is None:
+        return (
+            f"dependency {declaration.name!r} cannot override an unresolved explicit "
+            "repo_type expression"
+        )
+    required_type = (
+        RepoType.DATASET
+        if call_kind is CallKind.LOAD_DATASET
+        else RepoType.MODEL
+        if call_kind not in {CallKind.HF_HUB_DOWNLOAD, CallKind.SNAPSHOT_DOWNLOAD}
+        else repo_type
+    )
+    if declaration.repo_type is not required_type:
+        return (
+            f"dependency {declaration.name!r} has repo_type "
+            f"{declaration.repo_type.value!r}, which is incompatible with "
+            f"{call_kind.value}"
+        )
+    if repo_type is not declaration.repo_type:
+        return (
+            f"dependency {declaration.name!r} has repo_type "
+            f"{declaration.repo_type.value!r}, but the call resolves to "
+            f"{repo_type.value!r}"
+        )
+    if repo_id is not None and repo_id != declaration.repo_id:
+        return (
+            f"dependency {declaration.name!r} declares repository "
+            f"{declaration.repo_id!r}, but source resolves to {repo_id!r}"
+        )
+    if not has_revision:
+        return None
+    if revision_error is not None:
+        return (
+            f"dependency {declaration.name!r} cannot override source revision: "
+            f"{revision_error}"
+        )
+    if requested_revision is not None and _COMMIT_SHA.fullmatch(requested_revision):
+        return None
+    if requested_revision != declaration.revision:
+        return (
+            f"dependency {declaration.name!r} tracks revision "
+            f"{declaration.revision!r}, but source resolves to {requested_revision!r}"
+        )
+    return None
 
 
 def match_call(function: cst.BaseExpression) -> CallSpec | None:

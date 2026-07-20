@@ -1,10 +1,11 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from hf_freeze.cli import app
 from hf_freeze.config import resolve_project_context
-from hf_freeze.models import CallKind, RepoType
+from hf_freeze.models import CallKind, DiagnosticSeverity, RepoType
 from hf_freeze.scan import scan_path
 
 
@@ -14,6 +15,158 @@ def write_project(tmp_path: Path, files: dict[str, str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
     return tmp_path
+
+
+def write_declared_project(
+    tmp_path: Path, source: str, *, repo_type: str = "model"
+) -> tuple[Path, object]:
+    project = write_project(
+        tmp_path,
+        {
+            "pyproject.toml": "[tool.hf-freeze.dependencies.primary-model]\n"
+            'repo_id = "org/model"\n'
+            f'repo_type = "{repo_type}"\n'
+            'revision = "stable"\n',
+            "app.py": source,
+        },
+    )
+    return project, resolve_project_context(project)
+
+
+def test_dependency_directive_resolves_dynamic_call_and_tracking_revision(
+    tmp_path: Path,
+) -> None:
+    project, context = write_declared_project(
+        tmp_path,
+        "# hf-freeze: dependency=primary-model\n"
+        "model = AutoModel.from_pretrained(settings.model)\n"
+        "# hf-freeze: dependency=primary-model\n"
+        'other = AutoModel.from_pretrained("org/model", revision="stable")\n',
+    )
+
+    result = scan_path(project, context=context)
+
+    assert result.diagnostics == ()
+    resolved = [
+        (item.repo_id, item.repo_type, item.requested_revision)
+        for item in result.findings
+    ]
+    assert resolved == [
+        ("org/model", RepoType.MODEL, "stable"),
+        ("org/model", RepoType.MODEL, "stable"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "repo_type", "code"),
+    [
+        (
+            "# hf-freeze: dependency=missing\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "UNKNOWN_DECLARATION",
+        ),
+        (
+            "# hf-freeze dependency=primary-model\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "MALFORMED_DIRECTIVE",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "DETACHED_DIRECTIVE",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "# ordinary intervening comment\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "DETACHED_DIRECTIVE",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "# hf-freeze: dependency=primary-model\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "MULTIPLE_DIRECTIVES",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\nvalue = settings.model\n",
+            "model",
+            "DIRECTIVE_CALL_COUNT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "a = AutoModel.from_pretrained(settings.a); "
+            "b = AutoModel.from_pretrained(settings.b)\n",
+            "model",
+            "DIRECTIVE_CALL_COUNT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "dataset",
+            "DIRECTIVE_CONFLICT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            'AutoModel.from_pretrained("other/model")\n',
+            "model",
+            "DIRECTIVE_CONFLICT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "hf_hub_download(settings.model, repo_type=get_type())\n",
+            "model",
+            "DIRECTIVE_CONFLICT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            'AutoModel.from_pretrained(settings.model, revision="other")\n',
+            "model",
+            "DIRECTIVE_CONFLICT",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "if enabled:\n"
+            "    AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "DETACHED_DIRECTIVE",
+        ),
+        (
+            "value = 1  # hf-freeze: dependency=primary-model\n"
+            "AutoModel.from_pretrained(settings.model)\n",
+            "model",
+            "DETACHED_DIRECTIVE",
+        ),
+    ],
+)
+def test_dependency_directive_errors_are_deterministic(
+    tmp_path: Path, source: str, repo_type: str, code: str
+) -> None:
+    project, context = write_declared_project(tmp_path, source, repo_type=repo_type)
+
+    result = scan_path(project, context=context)
+
+    assert code in {item.code for item in result.diagnostics}
+    assert any(item.severity is DiagnosticSeverity.ERROR for item in result.diagnostics)
+
+
+def test_unused_declaration_is_a_nonfatal_deterministic_warning(
+    tmp_path: Path,
+) -> None:
+    project, context = write_declared_project(
+        tmp_path, 'AutoModel.from_pretrained("other/model")\n'
+    )
+
+    result = scan_path(project, context=context)
+
+    warning = result.diagnostics[0]
+    assert warning.code == "UNUSED_DECLARATION"
+    assert warning.severity is DiagnosticSeverity.WARNING
+    assert result.findings[0].repo_id == "other/model"
 
 
 def test_discovers_supported_calls_constants_and_revisions(tmp_path: Path) -> None:
