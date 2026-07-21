@@ -8,6 +8,7 @@ from hf_freeze.check import IssueSeverity, check_lockfile
 from hf_freeze.cli import app
 from hf_freeze.lockfile import serialize_lockfile
 from hf_freeze.models import (
+    AcknowledgedDynamicFinding,
     CallKind,
     DependencyFinding,
     DependencyKind,
@@ -78,6 +79,29 @@ def checked(
 
 def test_matching_immutable_source_and_lock_is_clean_including_remote_code() -> None:
     assert checked(findings=(finding(trust=True),)) == ()
+
+
+def test_acknowledged_dynamic_is_a_location_and_reason_preserving_warning() -> None:
+    result = ScanResult(
+        findings=(),
+        diagnostics=(),
+        acknowledged=(
+            AcknowledgedDynamicFinding(
+                CallKind.FROM_PRETRAINED,
+                SourceLocation("app.py", 7, 8),
+                "runtime-user-selected-model",
+            ),
+        ),
+    )
+
+    issues = check_lockfile(result, Lockfile(version=1, dependencies=()))
+
+    assert len(issues) == 1
+    assert issues[0].severity is IssueSeverity.WARNING
+    assert issues[0].code == "ACKNOWLEDGED_DYNAMIC"
+    assert issues[0].source == SourceLocation("app.py", 7, 8)
+    assert "runtime-user-selected-model" in issues[0].message
+    assert "not frozen" in issues[0].message
 
 
 @pytest.mark.parametrize(

@@ -60,6 +60,7 @@ def check_lockfile(
         raise ValueError("non-frozen checking is not supported")
 
     issues: list[CheckIssue] = []
+    issues.extend(_acknowledged_issues(scan_result))
     for diagnostic in scan_result.diagnostics:
         issues.append(
             CheckIssue(
@@ -182,6 +183,29 @@ def check_remote_code_without_lock(
         if (issue := _check_trust_remote_code(finding, [])) is not None
     )
     return tuple(sorted(issues, key=_issue_key))
+
+
+def acknowledged_dynamic_issues(
+    scan_result: ScanResult,
+) -> tuple[CheckIssue, ...]:
+    """Render explicit dynamic acknowledgements through the warning issue path."""
+
+    return tuple(sorted(_acknowledged_issues(scan_result), key=_issue_key))
+
+
+def _acknowledged_issues(scan_result: ScanResult) -> list[CheckIssue]:
+    return [
+        CheckIssue(
+            IssueSeverity.WARNING,
+            "ACKNOWLEDGED_DYNAMIC",
+            f"{item.call_kind.value} is acknowledged for reason {item.reason!r}; "
+            "this call is not frozen",
+            "Replace the runtime repository expression with a lockable committed value "
+            "to include this call in the frozen guarantee.",
+            item.source,
+        )
+        for item in scan_result.acknowledged
+    ]
 
 
 def _check_finding(

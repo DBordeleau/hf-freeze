@@ -8,6 +8,7 @@ from hf_freeze import __version__
 from hf_freeze.check import (
     CheckIssue,
     IssueSeverity,
+    acknowledged_dynamic_issues,
     check_lockfile,
     check_remote_code_without_lock,
 )
@@ -32,6 +33,7 @@ from hf_freeze.lockfile import (
     write_lockfile,
 )
 from hf_freeze.models import (
+    AcknowledgedDynamicFinding,
     DependencyFinding,
     DiagnosticSeverity,
     ScanDiagnostic,
@@ -63,9 +65,10 @@ def scan(path: Path | None = typer.Argument(None)) -> None:
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="PATH") from error
 
-    entries: list[DependencyFinding | ScanDiagnostic] = [
+    entries: list[DependencyFinding | AcknowledgedDynamicFinding | ScanDiagnostic] = [
         *result.findings,
         *result.diagnostics,
+        *result.acknowledged,
     ]
     entries.sort(
         key=lambda item: (item.source.path, item.source.line, item.source.column)
@@ -79,6 +82,11 @@ def scan(path: Path | None = typer.Argument(None)) -> None:
                 else ""
             )
             typer.echo(f"{location}  {severity}{entry.message}")
+        elif isinstance(entry, AcknowledgedDynamicFinding):
+            typer.echo(
+                f"{location}  WARNING ACKNOWLEDGED_DYNAMIC  "
+                f"{entry.call_kind.value} reason={entry.reason}; call is not frozen"
+            )
         elif entry.repo_id is None:
             typer.echo(
                 f"{location}  {entry.call_kind.value}  unresolved: "
@@ -357,6 +365,7 @@ def _unusable_lock_issues(
             )
             for diagnostic in result.diagnostics
         ),
+        *acknowledged_dynamic_issues(result),
         *check_remote_code_without_lock(result),
     )
 
@@ -380,6 +389,8 @@ def _render_scan_warnings(result: ScanResult) -> None:
                 f"{location}  WARNING {diagnostic.code}  {diagnostic.message}",
                 err=True,
             )
+    for issue in acknowledged_dynamic_issues(result):
+        _render_check_issue(issue, err=True)
 
 
 def _render_scan_error(diagnostic: ScanDiagnostic) -> None:
@@ -390,11 +401,12 @@ def _render_scan_error(diagnostic: ScanDiagnostic) -> None:
     typer.echo(f"{location}  ERROR {diagnostic.code}  {diagnostic.message}", err=True)
 
 
-def _render_check_issue(issue: CheckIssue) -> None:
+def _render_check_issue(issue: CheckIssue, *, err: bool = False) -> None:
     prefix = ""
     if issue.source is not None:
         prefix = f"{issue.source.path}:{issue.source.line}:{issue.source.column + 1}  "
     typer.echo(
         f"{prefix}{issue.severity.value.upper()} {issue.code}  {issue.message}  "
-        f"Fix: {issue.remediation}"
+        f"Fix: {issue.remediation}",
+        err=err,
     )

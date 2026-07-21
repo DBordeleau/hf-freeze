@@ -76,6 +76,15 @@ class DependencyFinding:
 
 
 @dataclass(frozen=True)
+class AcknowledgedDynamicFinding:
+    """One supported call explicitly kept outside the frozen guarantee."""
+
+    call_kind: CallKind
+    source: SourceLocation
+    reason: str
+
+
+@dataclass(frozen=True)
 class ScanDiagnostic:
     """A file-specific problem that did not stop the wider scan."""
 
@@ -91,6 +100,7 @@ class ScanResult:
 
     findings: tuple[DependencyFinding, ...]
     diagnostics: tuple[ScanDiagnostic, ...]
+    acknowledged: tuple[AcknowledgedDynamicFinding, ...] = ()
 
 
 @dataclass(frozen=True)

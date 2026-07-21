@@ -76,6 +76,157 @@ def test_dependency_directive_resolves_dynamic_call_and_tracking_revision(
     ]
 
 
+def test_ignore_directive_acknowledges_only_the_attached_dynamic_call(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "app.py": "# hf-freeze: ignore=runtime-user-selected-model\n"
+            "model = AutoModel.from_pretrained(args.model)\n"
+            'other = AutoModel.from_pretrained("org/other")\n'
+        },
+    )
+
+    result = scan_path(project)
+
+    assert result.diagnostics == ()
+    assert [item.repo_id for item in result.findings] == ["org/other"]
+    assert len(result.acknowledged) == 1
+    acknowledged = result.acknowledged[0]
+    assert acknowledged.reason == "runtime-user-selected-model"
+    assert acknowledged.call_kind is CallKind.FROM_PRETRAINED
+    assert (acknowledged.source.path, acknowledged.source.line) == ("app.py", 2)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "# hf-freeze: ignore=runtime-env\n"
+        'AutoModel.from_pretrained(os.getenv("MODEL_ID"))\n',
+        "# hf-freeze: ignore=dynamic-data-files\n"
+        'load_dataset("json", data_files=f"hf://datasets/{name}/data.json")\n',
+    ],
+)
+def test_ignore_accepts_unbound_environment_and_unsupported_runtime_repositories(
+    tmp_path: Path, source: str
+) -> None:
+    result = scan_path(write_project(tmp_path, {"app.py": source}))
+
+    assert result.diagnostics == ()
+    assert result.findings == ()
+    assert len(result.acknowledged) == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "code"),
+    [
+        (
+            "# hf-freeze: ignore=\nAutoModel.from_pretrained(args.model)\n",
+            "MALFORMED_DIRECTIVE",
+        ),
+        (
+            "# hf-freeze: ignore=not.ascii\nAutoModel.from_pretrained(args.model)\n",
+            "MALFORMED_DIRECTIVE",
+        ),
+        (
+            "# hf-freeze: ignore=reason\n\nAutoModel.from_pretrained(args.model)\n",
+            "DETACHED_DIRECTIVE",
+        ),
+        ("# hf-freeze: ignore=reason\nvalue = args.model\n", "DIRECTIVE_CALL_COUNT"),
+        (
+            "# hf-freeze: ignore=reason\n"
+            "a = AutoModel.from_pretrained(args.a); "
+            "b = AutoModel.from_pretrained(args.b)\n",
+            "DIRECTIVE_CALL_COUNT",
+        ),
+        (
+            "# hf-freeze: ignore=reason\n"
+            "AutoModel.from_pretrained(args.model); value = 1\n",
+            "DIRECTIVE_COMPOUND_STATEMENT",
+        ),
+        (
+            "# hf-freeze: ignore=first\n# hf-freeze: ignore=second\n"
+            "AutoModel.from_pretrained(args.model)\n",
+            "MULTIPLE_DIRECTIVES",
+        ),
+        (
+            "# hf-freeze: dependency=primary-model\n"
+            "# hf-freeze: ignore=reason\n"
+            "AutoModel.from_pretrained(args.model)\n",
+            "MULTIPLE_DIRECTIVES",
+        ),
+    ],
+)
+def test_invalid_ignore_directives_are_deterministic_and_fatal(
+    tmp_path: Path, source: str, code: str
+) -> None:
+    project, context = write_declared_project(tmp_path, source)
+
+    result = scan_path(project, context=context)
+
+    assert code in {item.code for item in result.diagnostics}
+    assert any(item.severity is DiagnosticSeverity.ERROR for item in result.diagnostics)
+    assert result.acknowledged == ()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '# hf-freeze: ignore=reason\nAutoModel.from_pretrained("org/model")\n',
+        'MODEL = "org/model"\n# hf-freeze: ignore=reason\n'
+        "AutoModel.from_pretrained(MODEL)\n",
+        '# hf-freeze: ignore=reason\nAutoModel.from_pretrained("./local")\n',
+        '# hf-freeze: ignore=reason\nload_dataset("json", data_files="local.json")\n',
+        "# hf-freeze: ignore=reason\n"
+        "AutoModel.from_pretrained(args.model, revision=get_revision())\n",
+        "# hf-freeze: ignore=reason\n"
+        "hf_hub_download(args.model, repo_type=get_type())\n",
+        "# hf-freeze: ignore=reason\n"
+        "AutoModel.from_pretrained(args.model, trust_remote_code=True)\n",
+        'model_id = os.getenv("MODEL_ID")\nmodel_id = choose()\n'
+        "# hf-freeze: ignore=reason\nAutoModel.from_pretrained(model_id)\n",
+    ],
+)
+def test_ignore_cannot_suppress_resolved_local_or_conflicting_calls(
+    tmp_path: Path, source: str
+) -> None:
+    result = scan_path(write_project(tmp_path, {"app.py": source}))
+
+    assert {item.code for item in result.diagnostics} == {"IGNORE_CONFLICT"}
+    assert result.acknowledged == ()
+
+
+def test_ignore_cannot_override_committed_environment_binding(tmp_path: Path) -> None:
+    project, context = write_environment_project(
+        tmp_path,
+        "# hf-freeze: ignore=reason\n"
+        'AutoModel.from_pretrained(os.getenv("MODEL_ID"))\n',
+    )
+
+    result = scan_path(project, context=context)
+
+    assert {item.code for item in result.diagnostics} == {"IGNORE_CONFLICT"}
+    assert result.acknowledged == ()
+
+
+def test_removing_ignore_restores_unresolved_finding(tmp_path: Path) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(
+        "# hf-freeze: ignore=reason\nAutoModel.from_pretrained(args.model)\n",
+        encoding="utf-8",
+    )
+    acknowledged = scan_path(tmp_path)
+    source.write_text("AutoModel.from_pretrained(args.model)\n", encoding="utf-8")
+
+    unresolved = scan_path(tmp_path)
+
+    assert len(acknowledged.acknowledged) == 1
+    assert unresolved.acknowledged == ()
+    assert unresolved.findings[0].repo_id is None
+    assert unresolved.findings[0].unresolved_reason is not None
+
+
 @pytest.mark.parametrize(
     "expression",
     [

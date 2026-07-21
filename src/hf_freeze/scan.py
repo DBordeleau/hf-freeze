@@ -20,6 +20,7 @@ from hf_freeze.config import (
     iter_scoped_python_files,
 )
 from hf_freeze.models import (
+    AcknowledgedDynamicFinding,
     CallKind,
     DependencyFinding,
     DiagnosticSeverity,
@@ -34,9 +35,11 @@ DEFAULT_EXCLUDED_DIRECTORIES = _DEFAULT_EXCLUDED_DIRECTORIES
 LOCAL_DATASET_BUILDERS = frozenset({"json", "parquet"})
 _DIRECTIVE_PREFIX = "hf-freeze"
 _DEPENDENCY_DIRECTIVE = re.compile(r"hf-freeze:\s*dependency=([A-Za-z0-9_-]+)\Z")
+_IGNORE_DIRECTIVE = re.compile(r"hf-freeze:\s*ignore=([A-Za-z0-9_-]+)\Z")
 _COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 _MALFORMED_DIRECTIVE = (
-    "malformed hf-freeze directive; expected '# hf-freeze: dependency=<name>'"
+    "malformed hf-freeze directive; expected '# hf-freeze: dependency=<name>' "
+    "or '# hf-freeze: ignore=<reason>' using a nonempty ASCII identifier"
 )
 
 
@@ -54,6 +57,14 @@ class _EnvironmentReference:
 
     name: str
     fallback: str | None = None
+
+
+@dataclass(frozen=True)
+class _SourceDirective:
+    """One validated directive attached to exactly one supported call."""
+
+    declaration: DeclaredDependency | None = None
+    ignore_reason: str | None = None
 
 
 class _ConstantCollector(cst.CSTVisitor):
@@ -118,7 +129,7 @@ class _FindingVisitor(cst.CSTVisitor):
         self,
         display_path: str,
         binding_values: dict[int, str | bool | _EnvironmentReference | None],
-        directives: dict[int, DeclaredDependency],
+        directives: dict[int, _SourceDirective],
         dependencies: tuple[DeclaredDependency, ...],
         environment_bindings: tuple[tuple[str, str], ...],
     ) -> None:
@@ -129,6 +140,7 @@ class _FindingVisitor(cst.CSTVisitor):
         self.environment_bindings = dict(environment_bindings)
         self.used_declarations: set[str] = set()
         self.findings: list[DependencyFinding] = []
+        self.acknowledged: list[AcknowledgedDynamicFinding] = []
         self.diagnostics: list[ScanDiagnostic] = []
 
     def visit_Call(self, node: cst.Call) -> None:
@@ -136,13 +148,19 @@ class _FindingVisitor(cst.CSTVisitor):
         if spec is None:
             return
 
-        directive = self.directives.get(id(node))
+        source_directive = self.directives.get(id(node))
+        directive = (
+            source_directive.declaration if source_directive is not None else None
+        )
+        ignore_reason = (
+            source_directive.ignore_reason if source_directive is not None else None
+        )
 
         repo_expression = _find_argument(
             node, spec.keyword_names, positional_index=spec.positional_index
         )
         if (
-            directive is None
+            source_directive is None
             and spec.kind
             in {
                 CallKind.PIPELINE,
@@ -157,7 +175,7 @@ class _FindingVisitor(cst.CSTVisitor):
             self._resolve_environment_name,
         )
         if (
-            directive is None
+            source_directive is None
             and environment is None
             and repo_id is None
             and isinstance(repo_expression, cst.Name)
@@ -174,7 +192,7 @@ class _FindingVisitor(cst.CSTVisitor):
             if target is not None:
                 environment_declaration = self.declarations[target]
                 self.used_declarations.add(environment_declaration.name)
-            elif directive is None:
+            elif source_directive is None:
                 self._add_error(
                     node,
                     _missing_environment_binding_reason(environment),
@@ -199,6 +217,28 @@ class _FindingVisitor(cst.CSTVisitor):
             )
             return
         declaration = environment_declaration or directive
+        if ignore_reason is not None:
+            conflict = self._ignore_conflict(
+                node,
+                spec,
+                repo_expression,
+                repo_id,
+                environment,
+                environment_declaration,
+                unresolved_reason,
+            )
+            if conflict is not None:
+                self._add_error(node, conflict, "IGNORE_CONFLICT")
+                return
+            position = self.get_metadata(PositionProvider, node).start
+            self.acknowledged.append(
+                AcknowledgedDynamicFinding(
+                    spec.kind,
+                    SourceLocation(self.display_path, position.line, position.column),
+                    ignore_reason,
+                )
+            )
+            return
         if (
             declaration is None
             and repo_id is not None
@@ -287,6 +327,74 @@ class _FindingVisitor(cst.CSTVisitor):
                 trust_remote_code_unresolved_reason=trust_unresolved_reason,
             )
         )
+
+    def _ignore_conflict(
+        self,
+        node: cst.Call,
+        spec: CallSpec,
+        repo_expression: cst.BaseExpression | None,
+        repo_id: str | None,
+        environment: _EnvironmentReference | None,
+        environment_declaration: DeclaredDependency | None,
+        unresolved_reason: str | None,
+    ) -> str | None:
+        """Reject ignores that would hide anything except repository dynamism."""
+
+        if (
+            spec.kind in {CallKind.PIPELINE, CallKind.SENTENCE_TRANSFORMER}
+            and repo_expression is None
+        ):
+            return "ignore directive conflicts with a call the scanner would omit"
+        if environment_declaration is not None:
+            return (
+                "ignore directive conflicts with committed environment binding "
+                f"for {environment.name!r}"
+            )
+        if repo_id in LOCAL_DATASET_BUILDERS and spec.kind is CallKind.LOAD_DATASET:
+            data_files = _find_argument(node, ("data_files",), positional_index=None)
+            data_files_kind = _classify_data_files(data_files)
+            if data_files_kind == "non_hub":
+                return (
+                    "ignore directive conflicts with a confidently local dataset call"
+                )
+            repo_id = None
+            unresolved_reason = (
+                "load_dataset uses Hugging Face data_files; repository ID extraction "
+                "from data_files is unsupported"
+                if data_files_kind == "hub"
+                else "load_dataset packaged builder does not have confidently local "
+                "data_files"
+            )
+        if repo_id is not None:
+            if _is_obvious_local_path(repo_id):
+                return "ignore directive conflicts with a confidently local path"
+            return "ignore directive conflicts with an already resolved repository ID"
+        if isinstance(repo_expression, cst.Name) and environment is None:
+            environment_problem = self._environment_name_problem(repo_expression)
+            if environment_problem is not None:
+                return f"ignore directive cannot override: {environment_problem}"
+        if unresolved_reason is None and environment is None:
+            return "ignore directive applies to a call that is not unresolved"
+
+        revision_expression = _find_argument(node, ("revision",), positional_index=None)
+        _, revision_error = _resolve_revision(
+            revision_expression, self._resolve_string_name
+        )
+        if revision_error is not None:
+            return f"ignore directive cannot override source revision: {revision_error}"
+        if _repo_type(node, spec.repo_type, self._resolve_string_name) is None:
+            return "ignore directive cannot override an unresolved explicit repo_type"
+        trust_expression = _find_argument(
+            node, ("trust_remote_code",), positional_index=None
+        )
+        trust_remote_code, trust_error = _resolve_boolean(
+            trust_expression, self._resolve_boolean_name
+        )
+        if trust_error is not None:
+            return f"ignore directive cannot override: {trust_error}"
+        if trust_remote_code:
+            return "ignore directive cannot acknowledge trust_remote_code=True"
+        return None
 
     def _binding_value(
         self, expression: cst.Name
@@ -390,16 +498,18 @@ def scan_path(
         context = ProjectContext(root, None, ProjectConfig())
 
     findings: list[DependencyFinding] = []
+    acknowledged: list[AcknowledgedDynamicFinding] = []
     diagnostics: list[ScanDiagnostic] = []
     used_declarations: set[str] = set()
     for source_path, display_path in iter_scoped_python_files(context, target):
-        file_findings, file_diagnostics, used_names = _scan_file(
+        file_findings, file_acknowledged, file_diagnostics, used_names = _scan_file(
             source_path,
             display_path,
             context.config.dependencies,
             context.config.environment_bindings,
         )
         findings.extend(file_findings)
+        acknowledged.extend(file_acknowledged)
         diagnostics.extend(file_diagnostics)
         used_declarations.update(used_names)
 
@@ -420,12 +530,15 @@ def scan_path(
                 )
             )
 
-    def location_key(item: DependencyFinding | ScanDiagnostic) -> tuple[str, int, int]:
+    def location_key(
+        item: DependencyFinding | AcknowledgedDynamicFinding | ScanDiagnostic,
+    ) -> tuple[str, int, int]:
         return (item.source.path, item.source.line, item.source.column)
 
     return ScanResult(
         findings=tuple(sorted(findings, key=location_key)),
         diagnostics=tuple(sorted(diagnostics, key=location_key)),
+        acknowledged=tuple(sorted(acknowledged, key=location_key)),
     )
 
 
@@ -434,12 +547,18 @@ def _scan_file(
     display_path: str,
     dependencies: tuple[DeclaredDependency, ...],
     environment_bindings: tuple[tuple[str, str], ...],
-) -> tuple[list[DependencyFinding], list[ScanDiagnostic], set[str]]:
+) -> tuple[
+    list[DependencyFinding],
+    list[AcknowledgedDynamicFinding],
+    list[ScanDiagnostic],
+    set[str],
+]:
     try:
         module = cst.parse_module(source_path.read_bytes())
     except cst.ParserSyntaxError as error:
         message = " ".join(error.message.split())
         return (
+            [],
             [],
             [
                 ScanDiagnostic(
@@ -455,6 +574,7 @@ def _scan_file(
         )
     except OSError as error:
         return (
+            [],
             [],
             [
                 ScanDiagnostic(
@@ -480,7 +600,12 @@ def _scan_file(
     )
     wrapper.visit(visitor)
     diagnostics.extend(visitor.diagnostics)
-    return visitor.findings, diagnostics, used_names | visitor.used_declarations
+    return (
+        visitor.findings,
+        visitor.acknowledged,
+        diagnostics,
+        used_names | visitor.used_declarations,
+    )
 
 
 def _analyze_directives(
@@ -488,7 +613,7 @@ def _analyze_directives(
     display_path: str,
     dependencies: tuple[DeclaredDependency, ...],
 ) -> tuple[
-    dict[int, DeclaredDependency],
+    dict[int, _SourceDirective],
     list[ScanDiagnostic],
     set[str],
 ]:
@@ -509,7 +634,7 @@ def _analyze_directives(
     }
     declarations = {item.name: item for item in dependencies}
     handled: set[int] = set()
-    bindings: dict[int, DeclaredDependency] = {}
+    bindings: dict[int, _SourceDirective] = {}
     diagnostics: list[ScanDiagnostic] = []
     used_names: set[str] = set()
 
@@ -520,10 +645,9 @@ def _analyze_directives(
 
         block_directives: list[tuple[cst.Comment, int, int]] = []
         line = previous
-        while line in comments:
+        while line in comments and line in directive_comments:
             comment, column = comments[line]
-            if line in directive_comments:
-                block_directives.append((comment, line, column))
+            block_directives.append((comment, line, column))
             line -= 1
 
         call_collector = _SupportedCallCollector()
@@ -544,8 +668,10 @@ def _analyze_directives(
 
         record = block_directives[0]
         comment = record[0]
-        match = _DEPENDENCY_DIRECTIVE.fullmatch(comment.value[1:].strip())
-        if match is None:
+        directive_text = comment.value[1:].strip()
+        dependency_match = _DEPENDENCY_DIRECTIVE.fullmatch(directive_text)
+        ignore_match = _IGNORE_DIRECTIVE.fullmatch(directive_text)
+        if dependency_match is None and ignore_match is None:
             diagnostics.append(
                 _directive_diagnostic(
                     display_path, record, "MALFORMED_DIRECTIVE", _MALFORMED_DIRECTIVE
@@ -558,13 +684,30 @@ def _analyze_directives(
                     display_path,
                     record,
                     "DIRECTIVE_CALL_COUNT",
-                    "dependency directive must attach to a statement containing "
+                    "hf-freeze directive must attach to a statement containing "
                     f"exactly one supported Hub call; found {len(calls)}",
                 )
             )
             continue
+        if len(statement.body) != 1:
+            diagnostics.append(
+                _directive_diagnostic(
+                    display_path,
+                    record,
+                    "DIRECTIVE_COMPOUND_STATEMENT",
+                    "hf-freeze directive must attach to one simple statement, not a "
+                    "compound semicolon statement",
+                )
+            )
+            continue
 
-        name = match.group(1)
+        call = calls[0]
+        if ignore_match is not None:
+            bindings[id(call)] = _SourceDirective(ignore_reason=ignore_match.group(1))
+            continue
+
+        assert dependency_match is not None
+        name = dependency_match.group(1)
         declaration = declarations.get(name)
         if declaration is None:
             diagnostics.append(
@@ -577,19 +720,22 @@ def _analyze_directives(
             )
             continue
         used_names.add(name)
-        call = calls[0]
-        bindings[id(call)] = declaration
+        bindings[id(call)] = _SourceDirective(declaration=declaration)
 
     for line, (comment, column) in sorted(directive_comments.items()):
         if id(comment) in handled:
             continue
         record = (comment, line, column)
-        if _DEPENDENCY_DIRECTIVE.fullmatch(comment.value[1:].strip()) is None:
+        directive_text = comment.value[1:].strip()
+        if (
+            _DEPENDENCY_DIRECTIVE.fullmatch(directive_text) is None
+            and _IGNORE_DIRECTIVE.fullmatch(directive_text) is None
+        ):
             code, message = "MALFORMED_DIRECTIVE", _MALFORMED_DIRECTIVE
         else:
             code, message = (
                 "DETACHED_DIRECTIVE",
-                "dependency directive is detached; place it immediately above a "
+                "hf-freeze directive is detached; place it immediately above a "
                 "simple statement with exactly one supported Hub call",
             )
         diagnostics.append(_directive_diagnostic(display_path, record, code, message))

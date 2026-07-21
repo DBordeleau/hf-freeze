@@ -33,6 +33,70 @@ class FakeResolver:
         return self.shas.get(repo_id, SHA)
 
 
+def test_acknowledged_dynamic_complete_bounded_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "app.py"
+    ignored_block = (
+        b"# hf-freeze: ignore=runtime-user-selected-model\n"
+        b"dynamic = AutoModel.from_pretrained(args.model)\n"
+    )
+    source.write_bytes(
+        b'locked = AutoModel.from_pretrained("org/model")\n' + ignored_block
+    )
+    resolver = FakeResolver({"org/model": SHA})
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    scanned = runner.invoke(app, ["scan", str(tmp_path)])
+    locked = runner.invoke(app, ["lock", str(tmp_path)])
+    previewed = runner.invoke(app, ["pin", str(tmp_path)])
+    written = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+    checked = runner.invoke(app, ["check", str(tmp_path), "--frozen"])
+
+    assert [
+        item.exit_code for item in (scanned, locked, previewed, written, checked)
+    ] == [0, 0, 0, 0, 0]
+    for result in (scanned, locked, previewed, written, checked):
+        output = result.stdout + result.stderr
+        assert "app.py:3:11" in output
+        assert "ACKNOWLEDGED_DYNAMIC" in output
+        assert "runtime-user-selected-model" in output
+        assert "not frozen" in output
+    assert read_lockfile(tmp_path / "hf.lock").dependencies[0].repo_id == "org/model"
+    assert len(read_lockfile(tmp_path / "hf.lock").dependencies) == 1
+    assert resolver.calls == [("org/model", RepoType.MODEL, "main")]
+    assert source.read_bytes().endswith(ignored_block)
+    assert SHA.encode() in source.read_bytes().splitlines()[0]
+    assert "revision" in previewed.stdout
+
+
+def test_fatal_ignore_diagnostic_prevents_hub_lock_and_source_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "app.py"
+    source.write_text(
+        "# hf-freeze: ignore=\nAutoModel.from_pretrained(args.model)\n",
+        encoding="utf-8",
+    )
+    destination = tmp_path / "hf.lock"
+    write_lockfile(destination, Lockfile(version=1, dependencies=()))
+    before_source = source.read_bytes()
+    before_lock = destination.read_bytes()
+    resolver = FakeResolver()
+    monkeypatch.setattr(hf_freeze.cli, "HfHubResolver", lambda: resolver)
+    runner = CliRunner()
+
+    locked = runner.invoke(app, ["lock", str(tmp_path)])
+    pinned = runner.invoke(app, ["pin", str(tmp_path), "--write"])
+
+    assert locked.exit_code == pinned.exit_code == 1
+    assert "MALFORMED_DIRECTIVE" in pinned.stderr
+    assert resolver.calls == []
+    assert source.read_bytes() == before_source
+    assert destination.read_bytes() == before_lock
+
+
 def test_lock_cli_writes_stable_lockfile_with_fake_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
