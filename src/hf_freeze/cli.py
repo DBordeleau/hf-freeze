@@ -34,10 +34,14 @@ from hf_freeze.lockfile import (
 )
 from hf_freeze.models import (
     AcknowledgedDynamicFinding,
+    CallCoverage,
+    CoverageKind,
     DependencyFinding,
     DiagnosticSeverity,
     ScanDiagnostic,
     ScanResult,
+    SourceLocation,
+    coverage_counts,
 )
 from hf_freeze.rewrite import apply_rewrite_plan, plan_rewrites
 from hf_freeze.scan import scan_path
@@ -81,7 +85,13 @@ def scan(path: Path | None = typer.Argument(None)) -> None:
                 if entry.severity is DiagnosticSeverity.WARNING
                 else ""
             )
-            typer.echo(f"{location}  {severity}{entry.message}")
+            record = _coverage_at(result, entry.source)
+            coverage = (
+                ""
+                if record is None
+                else f"  call={record.call_kind.value}  coverage={record.kind.value}"
+            )
+            typer.echo(f"{location}  {severity}{entry.message}{coverage}")
         elif isinstance(entry, AcknowledgedDynamicFinding):
             typer.echo(
                 f"{location}  WARNING ACKNOWLEDGED_DYNAMIC  "
@@ -90,18 +100,29 @@ def scan(path: Path | None = typer.Argument(None)) -> None:
         elif entry.repo_id is None:
             typer.echo(
                 f"{location}  {entry.call_kind.value}  unresolved: "
-                f"{entry.unresolved_reason}"
+                f"{entry.unresolved_reason}  coverage="
+                f"{_finding_coverage(result, entry).value}"
             )
         else:
             repo_type = entry.repo_type.value if entry.repo_type else "unknown"
+            unresolved = (
+                ""
+                if entry.repo_type is not None
+                else "  unresolved: repository type is unresolved"
+            )
             if entry.revision_unresolved_reason is not None:
                 revision = f"<unresolved: {entry.revision_unresolved_reason}>"
             else:
                 revision = entry.requested_revision or "<default>"
             typer.echo(
                 f"{location}  {entry.call_kind.value}  {repo_type}  "
-                f"{entry.repo_id}  revision={revision}"
+                f"{entry.repo_id}  revision={revision}{unresolved}  coverage="
+                f"{_finding_coverage(result, entry).value}"
             )
+    _render_coverage_summary(
+        result,
+        "Coverage summary (classification only; scan does not verify frozen coverage):",
+    )
 
 
 @app.command()
@@ -165,7 +186,16 @@ def check(
 
     for issue in issues:
         _render_check_issue(issue)
-    if any(issue.severity is IssueSeverity.ERROR for issue in issues):
+    failed = any(issue.severity is IssueSeverity.ERROR for issue in issues)
+    typer.echo(f"Frozen verification: {'FAILED' if failed else 'SUCCEEDED'}.")
+    _render_coverage_summary(result, "Coverage summary:")
+    acknowledged = dict(coverage_counts(result))[CoverageKind.ACKNOWLEDGED_DYNAMIC]
+    if acknowledged:
+        typer.echo(
+            "Acknowledged dynamic calls are outside the frozen guarantee; "
+            "successful verification does not imply full runtime reproducibility."
+        )
+    if failed:
         raise typer.Exit(code=1)
 
 
@@ -410,3 +440,31 @@ def _render_check_issue(issue: CheckIssue, *, err: bool = False) -> None:
         f"Fix: {issue.remediation}",
         err=err,
     )
+
+
+def _render_coverage_summary(result: ScanResult, heading: str) -> None:
+    typer.echo(heading)
+    for kind, count in coverage_counts(result):
+        typer.echo(f"  {kind.value}: {count}")
+
+
+def _coverage_at(result: ScanResult, source: SourceLocation) -> CallCoverage | None:
+    matches = [record for record in result.coverage if record.source == source]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _finding_coverage(result: ScanResult, finding: DependencyFinding) -> CoverageKind:
+    matches = [
+        record.kind
+        for record in result.coverage
+        if record.source == finding.source and record.call_kind is finding.call_kind
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if (
+        finding.repo_id is None
+        or finding.repo_type is None
+        or finding.revision_unresolved_reason is not None
+    ):
+        return CoverageKind.UNRESOLVED
+    return CoverageKind.LOCKED_STATIC

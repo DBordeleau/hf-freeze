@@ -18,6 +18,14 @@ of complete framework or ecosystem support.
   commits. The positive cohort exercised three supported call families:
   Sentence Transformers, direct Hub download, and Datasets loading.
 
+The later application-scope, named-declaration, committed environment-binding,
+source-directive, and acknowledged-dynamic mechanisms were not used in these
+eight historical validations. Their implementation does not retroactively turn
+the **0/5** broad result into successful real-project evidence or expand the
+**3/3** product-fit result. Exact-commit validation of those mechanisms is
+separate Slice 18 work; until that evidence is recorded, the results below
+remain the complete bounded compatibility claim.
+
 ## Validation method
 
 On 2026-07-19, each public repository was shallow-cloned into a disposable

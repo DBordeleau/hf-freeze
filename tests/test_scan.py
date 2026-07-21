@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 
 from hf_freeze.cli import app
 from hf_freeze.config import resolve_project_context
-from hf_freeze.models import CallKind, DiagnosticSeverity, RepoType
+from hf_freeze.models import CallKind, CoverageKind, DiagnosticSeverity, RepoType
 from hf_freeze.scan import scan_path
 
 
@@ -50,6 +50,97 @@ def write_environment_project(
         },
     )
     return project, resolve_project_context(project)
+
+
+def test_all_coverage_categories_use_precedence_and_fixed_summary_order(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "pyproject.toml": """\
+[tool.hf-freeze.dependencies.static-model]
+repo_id = "org/static"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.dependencies.environment-model]
+repo_id = "org/environment"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.dependencies.annotation-model]
+repo_id = "org/annotation"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.bindings.environment]
+MODEL_ID = "environment-model"
+""",
+            "app.py": """\
+# hf-freeze: dependency=static-model
+AutoModel.from_pretrained("org/static")
+# hf-freeze: dependency=environment-model
+AutoModel.from_pretrained(os.getenv("MODEL_ID"), trust_remote_code=get_policy())
+# hf-freeze: dependency=annotation-model
+AutoModel.from_pretrained(settings.model, trust_remote_code=get_policy())
+# hf-freeze: ignore=runtime-user-selection
+AutoModel.from_pretrained(args.model)
+AutoModel.from_pretrained(choose_model())
+""",
+        },
+    )
+    context = resolve_project_context(project)
+
+    scanned = scan_path(project, context=context)
+    cli = CliRunner().invoke(app, ["scan", str(project)])
+
+    assert [item.kind for item in scanned.coverage] == list(CoverageKind)
+    assert cli.exit_code == 0
+    assert cli.stdout.index("LOCKED_STATIC: 1") < cli.stdout.index(
+        "LOCKED_ENV_BINDING: 1"
+    )
+    assert cli.stdout.index("LOCKED_ENV_BINDING: 1") < cli.stdout.index(
+        "LOCKED_ANNOTATION: 1"
+    )
+    assert cli.stdout.index("LOCKED_ANNOTATION: 1") < cli.stdout.index(
+        "ACKNOWLEDGED_DYNAMIC: 1"
+    )
+    assert cli.stdout.index("ACKNOWLEDGED_DYNAMIC: 1") < cli.stdout.index(
+        "UNRESOLVED: 1"
+    )
+    assert "scan does not verify frozen coverage" in cli.stdout
+
+
+def test_call_specific_conflict_contributes_one_unresolved_classification(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {
+            "pyproject.toml": """\
+[tool.hf-freeze.dependencies.environment-model]
+repo_id = "org/environment"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.dependencies.other-model]
+repo_id = "org/other"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.bindings.environment]
+MODEL_ID = "environment-model"
+""",
+            "app.py": "# hf-freeze: dependency=other-model\n"
+            'AutoModel.from_pretrained(os.getenv("MODEL_ID"))\n',
+        },
+    )
+
+    result = scan_path(project, context=resolve_project_context(project))
+
+    assert [item.kind for item in result.coverage] == [CoverageKind.UNRESOLVED]
+    assert {item.code for item in result.diagnostics} == {"BINDING_DIRECTIVE_CONFLICT"}
 
 
 def test_dependency_directive_resolves_dynamic_call_and_tracking_revision(
@@ -926,6 +1017,26 @@ def test_scan_cli_fixture_smoke() -> None:
         "app.py:4:8  load_dataset  dataset  org/data  revision=<default>"
         in result.stdout
     )
+
+
+def test_scan_cli_keeps_repo_details_when_explicit_repo_type_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        {"app.py": 'hf_hub_download("org/files", repo_type=get_type())\n'},
+    )
+
+    scanned = scan_path(project)
+    rendered = CliRunner().invoke(app, ["scan", str(project)])
+
+    assert scanned.findings[0].repo_id == "org/files"
+    assert scanned.findings[0].repo_type is None
+    assert scanned.coverage[0].kind is CoverageKind.UNRESOLVED
+    assert rendered.exit_code == 0
+    assert "hf_hub_download  unknown  org/files  revision=<default>" in rendered.stdout
+    assert "unresolved: repository type is unresolved" in rendered.stdout
+    assert "coverage=UNRESOLVED" in rendered.stdout
 
 
 def test_revision_discovery_distinguishes_omitted_resolved_and_dynamic(

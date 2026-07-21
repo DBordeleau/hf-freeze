@@ -40,6 +40,19 @@ class DependencyKind(str, Enum):
     ADAPTER = "adapter"
 
 
+class CoverageKind(str, Enum):
+    """Stable source-call coverage identifiers in deterministic display order."""
+
+    LOCKED_STATIC = "LOCKED_STATIC"
+    LOCKED_ENV_BINDING = "LOCKED_ENV_BINDING"
+    LOCKED_ANNOTATION = "LOCKED_ANNOTATION"
+    ACKNOWLEDGED_DYNAMIC = "ACKNOWLEDGED_DYNAMIC"
+    UNRESOLVED = "UNRESOLVED"
+
+
+COVERAGE_ORDER = tuple(CoverageKind)
+
+
 CALL_KIND_TO_DEPENDENCY_KIND = {
     CallKind.FROM_PRETRAINED: DependencyKind.MODEL,
     CallKind.LOAD_DATASET: DependencyKind.DATASET,
@@ -95,12 +108,50 @@ class ScanDiagnostic:
 
 
 @dataclass(frozen=True)
+class CallCoverage:
+    """Exactly one coverage classification for one supported source call site."""
+
+    kind: CoverageKind
+    call_kind: CallKind
+    source: SourceLocation
+
+
+@dataclass(frozen=True)
 class ScanResult:
     """Deterministically ordered findings and recoverable diagnostics."""
 
     findings: tuple[DependencyFinding, ...]
     diagnostics: tuple[ScanDiagnostic, ...]
     acknowledged: tuple[AcknowledgedDynamicFinding, ...] = ()
+    coverage: tuple[CallCoverage, ...] = ()
+
+
+def coverage_counts(result: ScanResult) -> tuple[tuple[CoverageKind, int], ...]:
+    """Count source call sites by stable coverage category."""
+
+    records = result.coverage
+    if not records:
+        records = tuple(
+            CallCoverage(_finding_coverage(finding), finding.call_kind, finding.source)
+            for finding in result.findings
+        ) + tuple(
+            CallCoverage(CoverageKind.ACKNOWLEDGED_DYNAMIC, item.call_kind, item.source)
+            for item in result.acknowledged
+        )
+    return tuple(
+        (kind, sum(record.kind is kind for record in records))
+        for kind in COVERAGE_ORDER
+    )
+
+
+def _finding_coverage(finding: DependencyFinding) -> CoverageKind:
+    if (
+        finding.repo_id is None
+        or finding.repo_type is None
+        or finding.revision_unresolved_reason is not None
+    ):
+        return CoverageKind.UNRESOLVED
+    return CoverageKind.LOCKED_STATIC
 
 
 @dataclass(frozen=True)
