@@ -25,10 +25,10 @@ hf-freeze pin --write
 hf-freeze check --frozen
 ```
 
-`scan` discovers supported literal calls; `lock` resolves their tracking
-revisions and writes `hf.lock`; dry-run `pin` shows the source diff. Only after
-reviewing that diff should `pin --write` make the accepted immutable SHAs
-explicit in supported source calls.
+`scan` discovers supported calls and shows how each one is covered; `lock`
+resolves lockable tracking revisions and writes `hf.lock`; dry-run `pin` shows
+the source diff. Only after reviewing that diff should `pin --write` make the
+accepted immutable SHAs explicit in supported source calls.
 
 ## Install
 
@@ -102,6 +102,77 @@ repository, lockfile, or Hub errors are failures. `pin` is dry-run by default an
 does not edit files unless `--write` is explicit. `update` is also dry-run by
 default; it changes only `hf.lock` when `--write` is explicit, never source.
 
+## Define application scope and dynamic dependencies
+
+Commit configuration under `[tool.hf-freeze]` in the nearest
+`pyproject.toml`. Include/exclude patterns define the application boundary;
+excluded calls are outside the guarantee. Named declarations give reviewable
+values to dynamic source expressions:
+
+```toml
+[tool.hf-freeze]
+include = ["src/**/*.py", "app.py"]
+exclude = ["tests/**", "examples/**"]
+
+[tool.hf-freeze.dependencies.primary-model]
+repo_id = "BAAI/bge-small-en-v1.5"
+repo_type = "model"
+revision = "main"
+
+[tool.hf-freeze.bindings.environment]
+MODEL_ID = "primary-model"
+```
+
+The committed binding makes `os.environ["MODEL_ID"]`,
+`os.environ.get("MODEL_ID")`, or `os.getenv("MODEL_ID")` resolve to the named
+declaration. It is authoritative for locking: `hf-freeze` neither reads nor
+verifies ambient shell, `.env`, CI, or deployment values. A deployment that
+supplies a different value is outside this guarantee.
+
+Bind another dynamic expression with the canonical leading dependency
+directive, or acknowledge an intentionally runtime-selected call with a reason:
+
+```python
+# hf-freeze: dependency=primary-model
+model = AutoModel.from_pretrained(settings.primary_model)
+
+# hf-freeze: ignore=runtime-user-selected-model
+preview = AutoModel.from_pretrained(args.model)
+```
+
+Dependency and ignore directives apply to exactly one supported call in the
+immediately following simple statement. An acknowledged call stays visible,
+is not pinned, and creates no lock entry.
+
+Both `scan` and `check --frozen` list all five stable categories in this order,
+including zero counts:
+
+```text
+LOCKED_STATIC
+LOCKED_ENV_BINDING
+LOCKED_ANNOTATION
+ACKNOWLEDGED_DYNAMIC
+UNRESOLVED
+```
+
+Counts are source call sites, not deduplicated `hf.lock` rows. In `scan`, these
+are classifications only; they are not proof that source and lock state are
+frozen. `check --frozen` reports verification success or failure. A project
+with acknowledged dynamic calls can pass with warnings, but those calls remain
+outside the frozen guarantee and success does not imply full runtime
+reproducibility.
+
+### Migrating from a broad whole-repository scan
+
+1. Define the actual application scope with `include` and `exclude` rather
+   than treating every test, example, and tool as one deployment.
+2. Add named declarations and committed environment/dependency bindings for
+   known dynamic values.
+3. Acknowledge only intentional runtime exceptions, one call at a time, with a
+   specific ignore reason; leave accidental dynamics unresolved.
+4. Run `scan`, then the review-first `lock`/`pin` workflow, and finish with
+   `check --frozen`.
+
 ### Supported call shapes
 
 The prototype recognizes literal strings and simple same-scope string constants
@@ -120,8 +191,8 @@ interpolated strings, imported configuration, and unsupported pipeline forms are
 reported rather than resolved silently.
 
 See [representative project compatibility](docs/compatibility.md) for the
-methodology and exact-commit results from five public repositories. That table
-records observed behavior and does not imply broad framework support.
+methodology and exact-commit results from eight public repositories. Those tables
+record observed behavior and do not imply broad framework support.
 
 ## Complete lifecycle demo
 

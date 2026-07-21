@@ -279,8 +279,17 @@ def test_check_cli_succeeds_offline_and_renders_source_location(
     failure = CliRunner().invoke(app, ["check", str(tmp_path), "--frozen"])
 
     assert success.exit_code == 0
-    assert success.stdout == ""
+    assert "Frozen verification: SUCCEEDED." in success.stdout
+    assert "LOCKED_STATIC: 1" in success.stdout
+    for category in (
+        "LOCKED_ENV_BINDING",
+        "LOCKED_ANNOTATION",
+        "ACKNOWLEDGED_DYNAMIC",
+        "UNRESOLVED",
+    ):
+        assert f"{category}: 0" in success.stdout
     assert failure.exit_code == 1
+    assert "Frozen verification: FAILED." in failure.stdout
     assert "app.py:1:1  ERROR FLOATING_REVISION" in failure.stdout
     assert "Fix:" in failure.stdout
 
@@ -300,6 +309,30 @@ def test_check_cli_renders_unpinned_remote_code_when_lock_entry_is_missing(
     assert result.exit_code == 1
     assert "app.py:1:1  ERROR UNPINNED_REMOTE_CODE" in result.stdout
     assert "ERROR MISSING_LOCK_ENTRY" in result.stdout
+
+
+def test_dynamic_trust_policy_does_not_change_static_identity_coverage(
+    tmp_path: Path,
+) -> None:
+    write_cli_project(
+        tmp_path,
+        f'AutoModel.from_pretrained("org/model", revision="{SHA}", '
+        "trust_remote_code=get_policy())\n",
+        Lockfile(version=1, dependencies=(dependency(),)),
+    )
+
+    scanned = CliRunner().invoke(app, ["scan", str(tmp_path)])
+    checked = CliRunner().invoke(app, ["check", str(tmp_path), "--frozen"])
+
+    assert scanned.exit_code == 0
+    assert "coverage=LOCKED_STATIC" in scanned.stdout
+    assert "LOCKED_STATIC: 1" in scanned.stdout
+    assert "UNRESOLVED: 0" in scanned.stdout
+    assert checked.exit_code == 1
+    assert "ERROR DYNAMIC_TRUST_REMOTE_CODE" in checked.stdout
+    assert "Frozen verification: FAILED." in checked.stdout
+    assert "LOCKED_STATIC: 1" in checked.stdout
+    assert "UNRESOLVED: 0" in checked.stdout
 
 
 def test_check_cli_warning_only_success_and_deterministic_output(

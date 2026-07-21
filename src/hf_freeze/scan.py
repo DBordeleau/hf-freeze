@@ -21,7 +21,9 @@ from hf_freeze.config import (
 )
 from hf_freeze.models import (
     AcknowledgedDynamicFinding,
+    CallCoverage,
     CallKind,
+    CoverageKind,
     DependencyFinding,
     DiagnosticSeverity,
     RepoType,
@@ -130,18 +132,21 @@ class _FindingVisitor(cst.CSTVisitor):
         display_path: str,
         binding_values: dict[int, str | bool | _EnvironmentReference | None],
         directives: dict[int, _SourceDirective],
+        invalid_directive_calls: set[int],
         dependencies: tuple[DeclaredDependency, ...],
         environment_bindings: tuple[tuple[str, str], ...],
     ) -> None:
         self.display_path = display_path
         self.binding_values = binding_values
         self.directives = directives
+        self.invalid_directive_calls = invalid_directive_calls
         self.declarations = {item.name: item for item in dependencies}
         self.environment_bindings = dict(environment_bindings)
         self.used_declarations: set[str] = set()
         self.findings: list[DependencyFinding] = []
         self.acknowledged: list[AcknowledgedDynamicFinding] = []
         self.diagnostics: list[ScanDiagnostic] = []
+        self.coverage: list[CallCoverage] = []
 
     def visit_Call(self, node: cst.Call) -> None:
         spec = match_call(node.func)
@@ -174,6 +179,7 @@ class _FindingVisitor(cst.CSTVisitor):
             self._resolve_string_name,
             self._resolve_environment_name,
         )
+        statically_resolved = repo_id is not None
         if (
             source_directive is None
             and environment is None
@@ -183,7 +189,10 @@ class _FindingVisitor(cst.CSTVisitor):
             environment_problem = self._environment_name_problem(repo_expression)
             if environment_problem is not None:
                 self._add_error(
-                    node, environment_problem, "AMBIGUOUS_ENVIRONMENT_REFERENCE"
+                    node,
+                    spec.kind,
+                    environment_problem,
+                    "AMBIGUOUS_ENVIRONMENT_REFERENCE",
                 )
                 return
         environment_declaration = None
@@ -195,6 +204,7 @@ class _FindingVisitor(cst.CSTVisitor):
             elif source_directive is None:
                 self._add_error(
                     node,
+                    spec.kind,
                     _missing_environment_binding_reason(environment),
                     "MISSING_ENVIRONMENT_BINDING",
                 )
@@ -215,6 +225,7 @@ class _FindingVisitor(cst.CSTVisitor):
                     code="BINDING_DIRECTIVE_CONFLICT",
                 )
             )
+            self._record_coverage(node, spec.kind, CoverageKind.UNRESOLVED)
             return
         declaration = environment_declaration or directive
         if ignore_reason is not None:
@@ -228,7 +239,7 @@ class _FindingVisitor(cst.CSTVisitor):
                 unresolved_reason,
             )
             if conflict is not None:
-                self._add_error(node, conflict, "IGNORE_CONFLICT")
+                self._add_error(node, spec.kind, conflict, "IGNORE_CONFLICT")
                 return
             position = self.get_metadata(PositionProvider, node).start
             self.acknowledged.append(
@@ -238,6 +249,7 @@ class _FindingVisitor(cst.CSTVisitor):
                     ignore_reason,
                 )
             )
+            self._record_coverage(node, spec.kind, CoverageKind.ACKNOWLEDGED_DYNAMIC)
             return
         if (
             declaration is None
@@ -296,6 +308,7 @@ class _FindingVisitor(cst.CSTVisitor):
                         ),
                     )
                 )
+                self._record_coverage(node, spec.kind, CoverageKind.UNRESOLVED)
                 return
             repo_id = declaration.repo_id
             repo_type = declaration.repo_type
@@ -327,6 +340,21 @@ class _FindingVisitor(cst.CSTVisitor):
                 trust_remote_code_unresolved_reason=trust_unresolved_reason,
             )
         )
+        if id(node) in self.invalid_directive_calls or (
+            repo_id is None
+            or repo_type is None
+            or revision_unresolved_reason is not None
+        ):
+            coverage = CoverageKind.UNRESOLVED
+        elif statically_resolved:
+            coverage = CoverageKind.LOCKED_STATIC
+        elif environment_declaration is not None:
+            coverage = CoverageKind.LOCKED_ENV_BINDING
+        elif directive is not None:
+            coverage = CoverageKind.LOCKED_ANNOTATION
+        else:
+            coverage = CoverageKind.UNRESOLVED
+        self._record_coverage(node, spec.kind, coverage)
 
     def _ignore_conflict(
         self,
@@ -475,7 +503,21 @@ class _FindingVisitor(cst.CSTVisitor):
             )
         return None
 
-    def _add_error(self, node: cst.Call, message: str, code: str) -> None:
+    def _record_coverage(
+        self, node: cst.Call, call_kind: CallKind, coverage: CoverageKind
+    ) -> None:
+        position = self.get_metadata(PositionProvider, node).start
+        self.coverage.append(
+            CallCoverage(
+                coverage,
+                call_kind,
+                SourceLocation(self.display_path, position.line, position.column),
+            )
+        )
+
+    def _add_error(
+        self, node: cst.Call, call_kind: CallKind, message: str, code: str
+    ) -> None:
         position = self.get_metadata(PositionProvider, node).start
         self.diagnostics.append(
             ScanDiagnostic(
@@ -484,6 +526,7 @@ class _FindingVisitor(cst.CSTVisitor):
                 code=code,
             )
         )
+        self._record_coverage(node, call_kind, CoverageKind.UNRESOLVED)
 
 
 def scan_path(
@@ -499,10 +542,17 @@ def scan_path(
 
     findings: list[DependencyFinding] = []
     acknowledged: list[AcknowledgedDynamicFinding] = []
+    coverage: list[CallCoverage] = []
     diagnostics: list[ScanDiagnostic] = []
     used_declarations: set[str] = set()
     for source_path, display_path in iter_scoped_python_files(context, target):
-        file_findings, file_acknowledged, file_diagnostics, used_names = _scan_file(
+        (
+            file_findings,
+            file_acknowledged,
+            file_coverage,
+            file_diagnostics,
+            used_names,
+        ) = _scan_file(
             source_path,
             display_path,
             context.config.dependencies,
@@ -510,6 +560,7 @@ def scan_path(
         )
         findings.extend(file_findings)
         acknowledged.extend(file_acknowledged)
+        coverage.extend(file_coverage)
         diagnostics.extend(file_diagnostics)
         used_declarations.update(used_names)
 
@@ -539,6 +590,7 @@ def scan_path(
         findings=tuple(sorted(findings, key=location_key)),
         diagnostics=tuple(sorted(diagnostics, key=location_key)),
         acknowledged=tuple(sorted(acknowledged, key=location_key)),
+        coverage=tuple(sorted(coverage, key=location_key)),
     )
 
 
@@ -550,6 +602,7 @@ def _scan_file(
 ) -> tuple[
     list[DependencyFinding],
     list[AcknowledgedDynamicFinding],
+    list[CallCoverage],
     list[ScanDiagnostic],
     set[str],
 ]:
@@ -558,6 +611,7 @@ def _scan_file(
     except cst.ParserSyntaxError as error:
         message = " ".join(error.message.split())
         return (
+            [],
             [],
             [],
             [
@@ -576,6 +630,7 @@ def _scan_file(
         return (
             [],
             [],
+            [],
             [
                 ScanDiagnostic(
                     source=SourceLocation(path=display_path, line=1, column=0),
@@ -586,7 +641,7 @@ def _scan_file(
         )
 
     wrapper = MetadataWrapper(module)
-    directives, diagnostics, used_names = _analyze_directives(
+    directives, invalid_directive_calls, diagnostics, used_names = _analyze_directives(
         wrapper, display_path, dependencies
     )
     collector = _ConstantCollector()
@@ -595,6 +650,7 @@ def _scan_file(
         display_path,
         collector.values,
         directives,
+        invalid_directive_calls,
         dependencies,
         environment_bindings,
     )
@@ -603,6 +659,7 @@ def _scan_file(
     return (
         visitor.findings,
         visitor.acknowledged,
+        visitor.coverage,
         diagnostics,
         used_names | visitor.used_declarations,
     )
@@ -614,6 +671,7 @@ def _analyze_directives(
     dependencies: tuple[DeclaredDependency, ...],
 ) -> tuple[
     dict[int, _SourceDirective],
+    set[int],
     list[ScanDiagnostic],
     set[str],
 ]:
@@ -635,6 +693,7 @@ def _analyze_directives(
     declarations = {item.name: item for item in dependencies}
     handled: set[int] = set()
     bindings: dict[int, _SourceDirective] = {}
+    invalid_calls: set[int] = set()
     diagnostics: list[ScanDiagnostic] = []
     used_names: set[str] = set()
 
@@ -664,6 +723,7 @@ def _analyze_directives(
                     "multiple hf-freeze directives are attached to one statement",
                 )
             )
+            invalid_calls.update(id(call) for call in calls)
             continue
 
         record = block_directives[0]
@@ -677,6 +737,7 @@ def _analyze_directives(
                     display_path, record, "MALFORMED_DIRECTIVE", _MALFORMED_DIRECTIVE
                 )
             )
+            invalid_calls.update(id(call) for call in calls)
             continue
         if len(calls) != 1:
             diagnostics.append(
@@ -688,6 +749,7 @@ def _analyze_directives(
                     f"exactly one supported Hub call; found {len(calls)}",
                 )
             )
+            invalid_calls.update(id(call) for call in calls)
             continue
         if len(statement.body) != 1:
             diagnostics.append(
@@ -699,6 +761,7 @@ def _analyze_directives(
                     "compound semicolon statement",
                 )
             )
+            invalid_calls.add(id(calls[0]))
             continue
 
         call = calls[0]
@@ -718,6 +781,7 @@ def _analyze_directives(
                     f"dependency directive references unknown declaration {name!r}",
                 )
             )
+            invalid_calls.add(id(call))
             continue
         used_names.add(name)
         bindings[id(call)] = _SourceDirective(declaration=declaration)
@@ -739,7 +803,7 @@ def _analyze_directives(
                 "simple statement with exactly one supported Hub call",
             )
         diagnostics.append(_directive_diagnostic(display_path, record, code, message))
-    return bindings, diagnostics, used_names
+    return bindings, invalid_calls, diagnostics, used_names
 
 
 def _is_directive_like(comment: str) -> bool:
