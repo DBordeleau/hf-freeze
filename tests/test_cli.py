@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import hf_freeze.cli
 from hf_freeze.cli import app
 from hf_freeze.config import ConfigError
 from hf_freeze.diff import RepositoryFile
@@ -62,6 +63,31 @@ def test_version_command() -> None:
 
     assert result.exit_code == 0
     assert result.stdout == "hf-freeze 0.1.0\n"
+
+
+def test_source_diff_retries_with_utf8_after_legacy_console_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rendered: list[tuple[str, bool]] = []
+    encodings: list[str] = []
+
+    def echo(value: str, *, nl: bool) -> None:
+        if not rendered:
+            rendered.append((value, nl))
+            raise UnicodeEncodeError("charmap", value, 0, 1, "unsupported")
+        rendered.append((value, nl))
+
+    class LegacyStdout:
+        def reconfigure(self, *, encoding: str) -> None:
+            encodings.append(encoding)
+
+    monkeypatch.setattr(hf_freeze.cli.typer, "echo", echo)
+    monkeypatch.setattr(hf_freeze.cli.sys, "stdout", LegacyStdout())
+
+    hf_freeze.cli._echo_source_diff("+ print('✅')\n")
+
+    assert encodings == ["utf-8"]
+    assert rendered == [("+ print('✅')\n", False)] * 2
 
 
 @pytest.mark.parametrize(

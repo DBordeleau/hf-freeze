@@ -85,6 +85,11 @@ def plan_source(
             f'    revision="{SHA}",\n'
             ")\n",
         ),
+        (
+            'model = AutoModel.from_pretrained("org/model").to(device)\n',
+            "model = AutoModel.from_pretrained("
+            f'"org/model", revision="{SHA}").to(device)\n',
+        ),
     ],
 )
 def test_insertion_preserves_complete_source(

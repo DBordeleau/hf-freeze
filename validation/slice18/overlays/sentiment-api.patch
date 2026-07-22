@@ -1,0 +1,28 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..f9fbcc0
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,10 @@
++[tool.hf-freeze]
++include = ["app/**/*.py"]
++
++[tool.hf-freeze.dependencies.sentiment-model]
++repo_id = "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.bindings.environment]
++MODEL_NAME = "sentiment-model"
+diff --git a/app/predict.py b/app/predict.py
+index a0b4a5c..f38d171 100644
+--- a/app/predict.py
++++ b/app/predict.py
+@@ -41,6 +41,7 @@ def load_model() -> None:
+ 
+     print(f"Loading model: {MODEL_NAME}")
+     # device=-1 forces CPU inference. We have no GPU on the free-tier host.
++    # hf-freeze: dependency=sentiment-model
+     _classifier = pipeline(
+         "sentiment-analysis", model=MODEL_NAME, device=-1
+     )  # -1 forces the maximum CPU usage

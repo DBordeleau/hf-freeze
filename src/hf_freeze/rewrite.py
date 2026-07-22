@@ -87,12 +87,16 @@ class _TargetTransformer(cst.CSTTransformer):
         target = self.targets.get(key)
         if target is None:
             return updated_node
-        self.seen.add(key)
 
         spec = match_call(original_node.func)
         if spec is None or spec.kind is not target.call_kind:
-            self._skip(target, "call kind changed after scanning")
+            # A chained call such as ``from_pretrained(...).to(device)`` gives
+            # both the inner and outer Call nodes the same start position. A
+            # mismatching wrapper is not evidence that the target changed;
+            # after traversal, an actually missing matching call is still
+            # reported by the unseen-target guard in ``_plan_file``.
             return updated_node
+        self.seen.add(key)
         if any(argument.star in {"*", "**"} for argument in original_node.args):
             self._skip(target, "call contains *args or **kwargs")
             return updated_node
