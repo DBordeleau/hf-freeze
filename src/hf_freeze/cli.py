@@ -1,5 +1,6 @@
 """Command-line interface for hf-freeze."""
 
+import sys
 from pathlib import Path
 
 import typer
@@ -323,7 +324,7 @@ def pin(
             typer.echo(f"Wrote {changed_path}")
     else:
         for change in plan.changes:
-            typer.echo(change.diff, nl=False)
+            _echo_source_diff(change.diff)
 
     for noop in plan.noops:
         target = noop.target
@@ -336,6 +337,19 @@ def pin(
         )
     if plan.skipped or write_skips:
         raise typer.Exit(code=1)
+
+
+def _echo_source_diff(value: str) -> None:
+    """Render an exact diff even when Windows selected a legacy code page."""
+
+    try:
+        typer.echo(value, nl=False)
+    except UnicodeEncodeError:
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is None:
+            raise
+        reconfigure(encoding="utf-8")
+        typer.echo(value, nl=False)
 
 
 def _resolve_scope(path: Path | None) -> tuple[ProjectContext, Path]:

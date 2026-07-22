@@ -1,0 +1,31 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 9e9323a..9f389a3 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -6,3 +6,11 @@ include_trailing_comma = true
+ line_length = 79
+ multi_line_output = 3
+ profile = "black"
++
++[tool.hf-freeze]
++include = ["export_hf_checkpoint.py"]
++
++[tool.hf-freeze.dependencies.base-model]
++repo_id = "huggyllama/llama-7b"
++repo_type = "model"
++revision = "main"
+diff --git a/export_hf_checkpoint.py b/export_hf_checkpoint.py
+index 23b96b8..c7332ed 100644
+--- a/export_hf_checkpoint.py
++++ b/export_hf_checkpoint.py
+@@ -10,8 +10,10 @@ assert (
+     BASE_MODEL
+ ), "Please specify a value for BASE_MODEL environment variable, e.g. `export BASE_MODEL=huggyllama/llama-7b`"  # noqa: E501
+ 
++# hf-freeze: dependency=base-model
+ tokenizer = LlamaTokenizer.from_pretrained(BASE_MODEL)
+ 
++# hf-freeze: dependency=base-model
+ base_model = LlamaForCausalLM.from_pretrained(
+     BASE_MODEL,
+     load_in_8bit=False,

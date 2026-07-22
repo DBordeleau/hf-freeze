@@ -191,8 +191,9 @@ interpolated strings, imported configuration, and unsupported pipeline forms are
 reported rather than resolved silently.
 
 See [representative project compatibility](docs/compatibility.md) for the
-methodology and exact-commit results from eight public repositories. Those tables
-record observed behavior and do not imply broad framework support.
+historical eight-project evidence and the separate 12-project expanded-contract
+revalidation. Those exact-commit tables record observed behavior and do not imply
+broad framework support.
 
 ## Complete lifecycle demo
 

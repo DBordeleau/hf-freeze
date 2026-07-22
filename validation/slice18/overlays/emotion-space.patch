@@ -1,0 +1,16 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..d1f4d74
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,10 @@
++[tool.hf-freeze]
++include = ["app.py"]
++
++[tool.hf-freeze.dependencies.emotion-model]
++repo_id = "Tanneru/Facial-Emotion-Detection-FER-RAFDB-AffectNet-BEIT-Large"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.bindings.environment]
++MODEL_ID = "emotion-model"

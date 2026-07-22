@@ -1,0 +1,11 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index f3b78b5..6797161 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -118,3 +118,6 @@ filterwarnings = [
+     "ignore:.*BPE.__init__ will not create from files anymore.*:DeprecationWarning:transformers",
+     "error::FutureWarning:transformers",
+ ]
++
++[tool.hf-freeze]
++include = ["examples/arrow_multitask/arrow_phi3_mini.py"]

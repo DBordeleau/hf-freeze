@@ -1,0 +1,58 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..509585b
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,22 @@
++[tool.hf-freeze]
++include = ["main.py"]
++
++[tool.hf-freeze.dependencies.classifier]
++repo_id = "distilbert-base-uncased-finetuned-sst-2-english"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.dependencies.generator]
++repo_id = "distilgpt2"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.dependencies.embedder]
++repo_id = "sentence-transformers/all-MiniLM-L6-v2"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.bindings.environment]
++MODEL_NAME = "classifier"
++GENERATOR_MODEL = "generator"
++EMBED_MODEL = "embedder"
+diff --git a/main.py b/main.py
+index c400ad1..17a0448 100644
+--- a/main.py
++++ b/main.py
+@@ -29,6 +29,7 @@ def load_models():
+     print("Loading models for CPU inference...")
+ 
+     # Use smaller, faster models optimized for CPU
++    # hf-freeze: dependency=classifier
+     models["classifier"] = pipeline(
+         "text-classification",
+         model=MODEL_NAME,
+@@ -36,6 +37,7 @@ def load_models():
+         torch_dtype=torch.float32
+     )
+ 
++    # hf-freeze: dependency=generator
+     models["generator"] = pipeline(
+         "text-generation",
+         model=GENERATOR_MODEL,
+@@ -44,7 +46,9 @@ def load_models():
+     )
+ 
+     # Lightweight embedding model
++    # hf-freeze: dependency=embedder
+     models["tokenizer"] = AutoTokenizer.from_pretrained(EMBED_MODEL)
++    # hf-freeze: dependency=embedder
+     models["embedder"] = AutoModel.from_pretrained(EMBED_MODEL)
+     models["embedder"].eval()
+ 

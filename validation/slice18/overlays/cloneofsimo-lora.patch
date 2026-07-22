@@ -1,0 +1,55 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..4a5a876
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,17 @@
++[tool.hf-freeze]
++include = ["lora_diffusion/preprocess_files.py"]
++
++[tool.hf-freeze.dependencies.swin-upscaler]
++repo_id = "caidas/swin2SR-classical-sr-x2-64"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.dependencies.clipseg]
++repo_id = "CIDAS/clipseg-rd64-refined"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.dependencies.blip-captioner]
++repo_id = "Salesforce/blip-image-captioning-large"
++repo_type = "model"
++revision = "main"
+diff --git a/lora_diffusion/preprocess_files.py b/lora_diffusion/preprocess_files.py
+index e9a642f..4340341 100644
+--- a/lora_diffusion/preprocess_files.py
++++ b/lora_diffusion/preprocess_files.py
+@@ -29,6 +29,7 @@ def swin_ir_sr(
+     # So this is currently in main branch, so this can be used in the future I guess?
+     from transformers import Swin2SRForImageSuperResolution, Swin2SRImageProcessor
+ 
++    # hf-freeze: dependency=swin-upscaler
+     model = Swin2SRForImageSuperResolution.from_pretrained(
+         model_id,
+     ).to(device)
+@@ -83,7 +84,9 @@ def clipseg_mask_generator(
+ 
+         target_prompts = [target_prompts] * len(images)
+ 
++    # hf-freeze: dependency=clipseg
+     processor = CLIPSegProcessor.from_pretrained(model_id)
++    # hf-freeze: dependency=clipseg
+     model = CLIPSegForImageSegmentation.from_pretrained(model_id).to(device)
+ 
+     masks = []
+@@ -135,7 +138,9 @@ def blip_captioning_dataset(
+ 
+     from transformers import BlipProcessor, BlipForConditionalGeneration
+ 
++    # hf-freeze: dependency=blip-captioner
+     processor = BlipProcessor.from_pretrained(model_id)
++    # hf-freeze: dependency=blip-captioner
+     model = BlipForConditionalGeneration.from_pretrained(model_id).to(device)
+     captions = []
+ 

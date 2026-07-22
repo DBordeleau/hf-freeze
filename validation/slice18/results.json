@@ -1,0 +1,1323 @@
+{
+  "schema_version": 1,
+  "hf_freeze": {
+    "audited_base": "2ca7646c4ebc510b71ad905d202e216183da1ae9",
+    "source_head": "2ca7646c4ebc510b71ad905d202e216183da1ae9",
+    "wheel_filename": "hf_freeze-0.1.0-py3-none-any.whl",
+    "wheel_sha256": "86fabe4e814a82f01c643491e126afb723c9241c01e653912ce9e54d3686616a",
+    "version_output": "Installed 26 packages in 547ms\nhf-freeze 0.1.0",
+    "help_exit_code": 0,
+    "help_output_sha256": "a4bd53aa9ed401b565f16b93b84aa8c9e0d1face04b535ef7584cfb385d97a3f"
+  },
+  "coverage_order": [
+    "LOCKED_STATIC",
+    "LOCKED_ENV_BINDING",
+    "LOCKED_ANNOTATION",
+    "ACKNOWLEDGED_DYNAMIC",
+    "UNRESOLVED"
+  ],
+  "method": {
+    "project_count": 12,
+    "target_code_installed_imported_or_executed": false,
+    "ambient_or_dotenv_dependency_input": false,
+    "credentials_used": false,
+    "model_weights_downloaded": false,
+    "raw_logs_location": "external --evidence-dir only"
+  },
+  "validation_errors": [],
+  "projects": [
+    {
+      "id": "alpaca-lora",
+      "repository": "tloen/alpaca-lora",
+      "project_url": "https://github.com/tloen/alpaca-lora",
+      "revision_url": "https://github.com/tloen/alpaca-lora/tree/8bb8579e403dc78e37fe81ffbb253c413007323f",
+      "commit": "8bb8579e403dc78e37fe81ffbb253c413007323f",
+      "cohort": "original",
+      "fetch_attempts": 1,
+      "application_boundary": "README-documented export_hf_checkpoint.py workflow",
+      "mechanisms": [
+        "application_scope",
+        "dependency_annotation"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "unsupported expression",
+        "coverage": {
+          "LOCKED_STATIC": 2,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 15
+        },
+        "output_sha256": "f15fd21466fe57e27ba112de357bd7c80277c82cf7cc5626f8c3eb7628a3df24"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 1,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 2,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "export_hf_checkpoint.py:14:13  from_pretrained  model  huggyllama/llama-7b  revision=main  coverage=LOCKED_ANNOTATION",
+          "export_hf_checkpoint.py:17:14  from_pretrained  model  huggyllama/llama-7b  revision=main  coverage=LOCKED_ANNOTATION",
+          "export_hf_checkpoint.py:27:14  peft_from_pretrained  model  tloen/alpaca-lora-7b  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/alpaca-lora.patch",
+        "overlay_sha256": "373ba072dc1d1cad4d9366459e63a5fa95958d2960efcc9afe59fff245d9d7b7"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "huggyllama/llama-7b",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "4782ad278652c7c71b72204d462d6d01eaaf7549",
+            "sources": [
+              {
+                "path": "export_hf_checkpoint.py",
+                "line": 14,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "export_hf_checkpoint.py",
+                "line": 17,
+                "call": "from_pretrained"
+              }
+            ]
+          },
+          {
+            "repo_id": "tloen/alpaca-lora-7b",
+            "repo_type": "model",
+            "kind": "adapter",
+            "requested_revision": "main",
+            "sha": "12103d6baae1b320aa60631b38acb6ea094a0539",
+            "sources": [
+              {
+                "path": "export_hf_checkpoint.py",
+                "line": 27,
+                "call": "peft_from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/export_hf_checkpoint.py\n+++ b/export_hf_checkpoint.py\n@@ -11,7 +11,7 @@\n ), \"Please specify a value for BASE_MODEL environment variable, e.g. `export BASE_MODEL=huggyllama/llama-7b`\"  # noqa: E501\n \n # hf-freeze: dependency=base-model\n-tokenizer = LlamaTokenizer.from_pretrained(BASE_MODEL)\n+tokenizer = LlamaTokenizer.from_pretrained(BASE_MODEL, revision=\"4782ad278652c7c71b72204d462d6d01eaaf7549\")\n \n # hf-freeze: dependency=base-model\n base_model = LlamaForCausalLM.from_pretrained(\n@@ -19,6 +19,7 @@\n     load_in_8bit=False,\n     torch_dtype=torch.float16,\n     device_map={\"\": \"cpu\"},\n+    revision=\"4782ad278652c7c71b72204d462d6d01eaaf7549\",\n )\n \n first_weight = base_model.model.layers[0].self_attn.q_proj.weight\n@@ -29,6 +30,7 @@\n     \"tloen/alpaca-lora-7b\",\n     device_map={\"\": \"cpu\"},\n     torch_dtype=torch.float16,\n+    revision=\"12103d6baae1b320aa60631b38acb6ea094a0539\",\n )\n \n lora_weight = lora_model.base_model.model.model.layers[\n",
+        "source_pin_diff_sha256": "44c12edd82deae711a547c0673e44181dd20cfc0693f542c30d03f1cd629a052",
+        "changed_python_files": [
+          "export_hf_checkpoint.py"
+        ]
+      }
+    },
+    {
+      "id": "tsdae",
+      "repository": "louisbrulenaudet/tsdae",
+      "project_url": "https://github.com/louisbrulenaudet/tsdae",
+      "revision_url": "https://github.com/louisbrulenaudet/tsdae/tree/82b47f5e324636d8ba8b02a46f2dde44a7c86066",
+      "commit": "82b47f5e324636d8ba8b02a46f2dde44a7c86066",
+      "cohort": "original",
+      "fetch_attempts": 1,
+      "application_boundary": "packaged src/tsdae library selected by pyproject source layout",
+      "mechanisms": [
+        "application_scope",
+        "ignore_directive"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "intentionally dynamic design",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 2
+        },
+        "output_sha256": "26cfc4152ec2b167a9674b7ac22ad48811798db7848cd0961f896ecd166144d2"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 2,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "src/tsdae/tsdae.py:136:38  WARNING ACKNOWLEDGED_DYNAMIC  load_dataset reason=caller-selected-dataset; call is not frozen",
+          "src/tsdae/tsdae.py:144:24  WARNING ACKNOWLEDGED_DYNAMIC  load_dataset reason=caller-selected-dataset; call is not frozen"
+        ],
+        "overlay": "validation/slice18/overlays/tsdae.patch",
+        "overlay_sha256": "ea7ea9279d8bcdfd9643b6c8499882c04be19acbf8da073568c468bbaa61d582"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete_with_acknowledged_dynamic",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [],
+        "source_pin_diff": "",
+        "source_pin_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "changed_python_files": [
+          "src/tsdae/tsdae.py"
+        ]
+      }
+    },
+    {
+      "id": "cloneofsimo-lora",
+      "repository": "cloneofsimo/lora",
+      "project_url": "https://github.com/cloneofsimo/lora",
+      "revision_url": "https://github.com/cloneofsimo/lora/tree/d84074b3e3496f1cfa8a3f49b8b9972ef463b483",
+      "commit": "d84074b3e3496f1cfa8a3f49b8b9972ef463b483",
+      "cohort": "original",
+      "fetch_attempts": 1,
+      "application_boundary": "documented lora_diffusion preprocessing utility",
+      "mechanisms": [
+        "application_scope",
+        "dependency_annotation"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "intentionally dynamic design",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 42
+        },
+        "output_sha256": "5bad1e16f3cd4cb65b9811b63b82d8774a94111d2cafd87a2333868e82dbb462"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 5,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "lora_diffusion/preprocess_files.py:33:13  from_pretrained  model  caidas/swin2SR-classical-sr-x2-64  revision=main  coverage=LOCKED_ANNOTATION",
+          "lora_diffusion/preprocess_files.py:88:17  from_pretrained  model  CIDAS/clipseg-rd64-refined  revision=main  coverage=LOCKED_ANNOTATION",
+          "lora_diffusion/preprocess_files.py:90:13  from_pretrained  model  CIDAS/clipseg-rd64-refined  revision=main  coverage=LOCKED_ANNOTATION",
+          "lora_diffusion/preprocess_files.py:142:17  from_pretrained  model  Salesforce/blip-image-captioning-large  revision=main  coverage=LOCKED_ANNOTATION",
+          "lora_diffusion/preprocess_files.py:144:13  from_pretrained  model  Salesforce/blip-image-captioning-large  revision=main  coverage=LOCKED_ANNOTATION"
+        ],
+        "overlay": "validation/slice18/overlays/cloneofsimo-lora.patch",
+        "overlay_sha256": "6b75f5c8968adf4f379f3c2584134abff653488782d8ebb21ab0243fc1b2094d"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "CIDAS/clipseg-rd64-refined",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "999e0328d9e10b484360c477313983f9afdd7050",
+            "sources": [
+              {
+                "path": "lora_diffusion/preprocess_files.py",
+                "line": 88,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "lora_diffusion/preprocess_files.py",
+                "line": 90,
+                "call": "from_pretrained"
+              }
+            ]
+          },
+          {
+            "repo_id": "Salesforce/blip-image-captioning-large",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "353689b859fcf0523410b1806dace5fb46ecdf41",
+            "sources": [
+              {
+                "path": "lora_diffusion/preprocess_files.py",
+                "line": 142,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "lora_diffusion/preprocess_files.py",
+                "line": 144,
+                "call": "from_pretrained"
+              }
+            ]
+          },
+          {
+            "repo_id": "caidas/swin2SR-classical-sr-x2-64",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "cee1c923c6a37361c6e5650b65dcf4be821e5d52",
+            "sources": [
+              {
+                "path": "lora_diffusion/preprocess_files.py",
+                "line": 33,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/lora_diffusion/preprocess_files.py\n+++ b/lora_diffusion/preprocess_files.py\n@@ -32,6 +32,7 @@\n     # hf-freeze: dependency=swin-upscaler\n     model = Swin2SRForImageSuperResolution.from_pretrained(\n         model_id,\n+        revision=\"cee1c923c6a37361c6e5650b65dcf4be821e5d52\",\n     ).to(device)\n     processor = Swin2SRImageProcessor()\n \n@@ -85,9 +86,9 @@\n         target_prompts = [target_prompts] * len(images)\n \n     # hf-freeze: dependency=clipseg\n-    processor = CLIPSegProcessor.from_pretrained(model_id)\n+    processor = CLIPSegProcessor.from_pretrained(model_id, revision=\"999e0328d9e10b484360c477313983f9afdd7050\")\n     # hf-freeze: dependency=clipseg\n-    model = CLIPSegForImageSegmentation.from_pretrained(model_id).to(device)\n+    model = CLIPSegForImageSegmentation.from_pretrained(model_id, revision=\"999e0328d9e10b484360c477313983f9afdd7050\").to(device)\n \n     masks = []\n \n@@ -139,9 +140,9 @@\n     from transformers import BlipProcessor, BlipForConditionalGeneration\n \n     # hf-freeze: dependency=blip-captioner\n-    processor = BlipProcessor.from_pretrained(model_id)\n+    processor = BlipProcessor.from_pretrained(model_id, revision=\"353689b859fcf0523410b1806dace5fb46ecdf41\")\n     # hf-freeze: dependency=blip-captioner\n-    model = BlipForConditionalGeneration.from_pretrained(model_id).to(device)\n+    model = BlipForConditionalGeneration.from_pretrained(model_id, revision=\"353689b859fcf0523410b1806dace5fb46ecdf41\").to(device)\n     captions = []\n \n     for image in tqdm(images):\n",
+        "source_pin_diff_sha256": "c5e847a5ac5d9a07ff3847f6b109fe376db4716eb4552668f7467195327d2715",
+        "changed_python_files": [
+          "lora_diffusion/preprocess_files.py"
+        ]
+      }
+    },
+    {
+      "id": "transformers-bloom-inference",
+      "repository": "huggingface/transformers-bloom-inference",
+      "project_url": "https://github.com/huggingface/transformers-bloom-inference",
+      "revision_url": "https://github.com/huggingface/transformers-bloom-inference/tree/62698bf4b75a105e0774ff77b43a4ee572d7b3da",
+      "commit": "62698bf4b75a105e0774ff77b43a4ee572d7b3da",
+      "cohort": "original",
+      "fetch_attempts": 1,
+      "application_boundary": "root ui.py Gradio client documented by the repository",
+      "mechanisms": [
+        "application_scope"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "scope",
+        "coverage": {
+          "LOCKED_STATIC": 1,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 19
+        },
+        "output_sha256": "d72edea0e7d18b6f249ecc3a6f7d8c37e1a2c5a47d6a42bba4147c6206ef857d"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 1,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "ui.py:37:26  from_pretrained  model  bigscience/bloom  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/transformers-bloom-inference.patch",
+        "overlay_sha256": "fdffdf080497d3eeb83d2e689d281a8a92f2780f56b8f673afac52ed77206580"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "bigscience/bloom",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "053d9cd9fbe814e091294f67fcfedb3397b954bb",
+            "sources": [
+              {
+                "path": "ui.py",
+                "line": 37,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/ui.py\n+++ b/ui.py\n@@ -34,7 +34,7 @@\n         self.generation_backend_port = args.generation_backend_port\n         self.workers = 1\n \n-        self.tokenizer = AutoTokenizer.from_pretrained(\"bigscience/bloom\")\n+        self.tokenizer = AutoTokenizer.from_pretrained(\"bigscience/bloom\", revision=\"053d9cd9fbe814e091294f67fcfedb3397b954bb\")\n \n         self.app = FastAPI(\n             routes=[\n",
+        "source_pin_diff_sha256": "a889dd096e68e1d2ebe0bbc716ea1a0f3a4f300e85de432404913ca1d9a16744",
+        "changed_python_files": [
+          "ui.py"
+        ]
+      }
+    },
+    {
+      "id": "peft",
+      "repository": "huggingface/peft",
+      "project_url": "https://github.com/huggingface/peft",
+      "revision_url": "https://github.com/huggingface/peft/tree/cea8213158c8b682acc0839405c2062d57fdf867",
+      "commit": "cea8213158c8b682acc0839405c2062d57fdf867",
+      "cohort": "original",
+      "fetch_attempts": 1,
+      "application_boundary": "one complete arrow_multitask example application",
+      "mechanisms": [
+        "application_scope"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "scope",
+        "coverage": {
+          "LOCKED_STATIC": 403,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 828
+        },
+        "output_sha256": "471884be4d9f74503816d6b07b9e0dde534e9c9bfdc8bffc0f9917fe40977c34"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 8,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "examples/arrow_multitask/arrow_phi3_mini.py:122:14  load_dataset  dataset  google/boolq  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:124:14  load_dataset  dataset  Rowan/hellaswag  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:126:14  load_dataset  dataset  allenai/ai2_arc  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:128:14  load_dataset  dataset  allenai/ai2_arc  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:130:14  load_dataset  dataset  allenai/openbookqa  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:132:14  load_dataset  dataset  allenai/winogrande  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:296:17  from_pretrained  model  microsoft/Phi-3-mini-4k-instruct  revision=<default>  coverage=LOCKED_STATIC",
+          "examples/arrow_multitask/arrow_phi3_mini.py:312:18  from_pretrained  model  microsoft/Phi-3-mini-4k-instruct  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/peft.patch",
+        "overlay_sha256": "b44ab515ad5c3c52eea2bc7f358d8714df8f6f2c29922045768b5660f976d812"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "Rowan/hellaswag",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "218ec52e09a7e7462a5400043bb9a69a41d06b76",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 124,
+                "call": "load_dataset"
+              }
+            ]
+          },
+          {
+            "repo_id": "allenai/ai2_arc",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "210d026faf9955653af8916fad021475a3f00453",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 126,
+                "call": "load_dataset"
+              },
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 128,
+                "call": "load_dataset"
+              }
+            ]
+          },
+          {
+            "repo_id": "allenai/openbookqa",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "388097ea7776314e93a529163e0fea805b8a6454",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 130,
+                "call": "load_dataset"
+              }
+            ]
+          },
+          {
+            "repo_id": "allenai/winogrande",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "01e74176c63542e6b0bcb004dcdea22d94fb67b5",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 132,
+                "call": "load_dataset"
+              }
+            ]
+          },
+          {
+            "repo_id": "google/boolq",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "35b264d03638db9f4ce671b711558bf7ff0f80d5",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 122,
+                "call": "load_dataset"
+              }
+            ]
+          },
+          {
+            "repo_id": "microsoft/Phi-3-mini-4k-instruct",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "f39ac1d28e925b323eae81227eaba4464caced4e",
+            "sources": [
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 296,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "examples/arrow_multitask/arrow_phi3_mini.py",
+                "line": 312,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/examples/arrow_multitask/arrow_phi3_mini.py\n+++ b/examples/arrow_multitask/arrow_phi3_mini.py\n@@ -119,17 +119,17 @@\n \n def read_test_dataset(ds_name):\n     if ds_name == \"boolq\":\n-        ds = load_dataset(\"google/boolq\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"google/boolq\", split=\"validation\", trust_remote_code=True, revision=\"35b264d03638db9f4ce671b711558bf7ff0f80d5\")\n     elif ds_name == \"hswag\":\n-        ds = load_dataset(\"Rowan/hellaswag\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"Rowan/hellaswag\", split=\"validation\", trust_remote_code=True, revision=\"218ec52e09a7e7462a5400043bb9a69a41d06b76\")\n     elif ds_name == \"arc-challenge\":\n-        ds = load_dataset(\"allenai/ai2_arc\", \"ARC-Challenge\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"allenai/ai2_arc\", \"ARC-Challenge\", split=\"validation\", trust_remote_code=True, revision=\"210d026faf9955653af8916fad021475a3f00453\")\n     elif ds_name == \"arc-easy\":\n-        ds = load_dataset(\"allenai/ai2_arc\", \"ARC-Easy\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"allenai/ai2_arc\", \"ARC-Easy\", split=\"validation\", trust_remote_code=True, revision=\"210d026faf9955653af8916fad021475a3f00453\")\n     elif ds_name == \"oqa\":\n-        ds = load_dataset(\"allenai/openbookqa\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"allenai/openbookqa\", split=\"validation\", trust_remote_code=True, revision=\"388097ea7776314e93a529163e0fea805b8a6454\")\n     elif ds_name == \"wg\":\n-        ds = load_dataset(\"allenai/winogrande\", \"winogrande_xl\", split=\"validation\", trust_remote_code=True)\n+        ds = load_dataset(\"allenai/winogrande\", \"winogrande_xl\", split=\"validation\", trust_remote_code=True, revision=\"01e74176c63542e6b0bcb004dcdea22d94fb67b5\")\n     else:\n         raise f\"Dataset {ds_name} is not supported yet.\"\n \n@@ -298,6 +298,7 @@\n         use_fast=True,\n         padding_side=\"right\",\n         model_max_length=MODEL_MAX_LEN,\n+        revision=\"f39ac1d28e925b323eae81227eaba4464caced4e\",\n     )\n \n     # Quantisation config\n@@ -314,6 +315,7 @@\n         dtype=torch.bfloat16,\n         device_map=\"auto\",\n         quantization_config=bnb_config,\n+        revision=\"f39ac1d28e925b323eae81227eaba4464caced4e\",\n     )\n \n     # Loading the test dataset\n",
+        "source_pin_diff_sha256": "13e54733b32cb59287811237cd07e1fc30ee290aad172d771e8b251a664a0356",
+        "changed_python_files": [
+          "examples/arrow_multitask/arrow_phi3_mini.py"
+        ]
+      }
+    },
+    {
+      "id": "streamlit-chatbot",
+      "repository": "luvris2/streamlit_chatbot",
+      "project_url": "https://github.com/luvris2/streamlit_chatbot",
+      "revision_url": "https://github.com/luvris2/streamlit_chatbot/tree/baf2ca43e0c3bc8971c0b944e268c1985ad0149d",
+      "commit": "baf2ca43e0c3bc8971c0b944e268c1985ad0149d",
+      "cohort": "earlier-positive",
+      "fetch_attempts": 1,
+      "application_boundary": "README-identified root Streamlit app.py",
+      "mechanisms": [
+        "application_scope"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_eligible",
+        "classification": "none",
+        "coverage": {
+          "LOCKED_STATIC": 1,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "output_sha256": "ef99b2faf02d57faeb3fff73ed23d39b334d6460dc7cd668042c5ecd173fd47a"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 1,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "app.py:16:13  sentence_transformer  model  jhgan/ko-sroberta-multitask  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/streamlit-chatbot.patch",
+        "overlay_sha256": "44cb40e167e60320a0f06688528e55f159e0b97d5e254c1c1f25cf45ca31566d"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "jhgan/ko-sroberta-multitask",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "8fca7c9c98c26599be0e14b9916b11a756a26f19",
+            "sources": [
+              {
+                "path": "app.py",
+                "line": 16,
+                "call": "sentence_transformer"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/app.py\n+++ b/app.py\n@@ -13,7 +13,7 @@\n @st.cache(allow_output_mutation=True)\n def cached_model():\n     #model = joblib.load('data/AI_chatbot.pkl')\n-    model = SentenceTransformer('jhgan/ko-sroberta-multitask')\n+    model = SentenceTransformer('jhgan/ko-sroberta-multitask', revision=\"8fca7c9c98c26599be0e14b9916b11a756a26f19\")\n     return model\n \n @st.cache(allow_output_mutation=True)\n",
+        "source_pin_diff_sha256": "260211a4cc9f25e3cae911cbdfb43cb47c61bdcc07b8da8f64869d1b59816919",
+        "changed_python_files": [
+          "app.py"
+        ]
+      }
+    },
+    {
+      "id": "titok",
+      "repository": "fun-research/TiTok",
+      "project_url": "https://huggingface.co/spaces/fun-research/TiTok",
+      "revision_url": "https://huggingface.co/spaces/fun-research/TiTok/tree/c08e40ef451698ea3f2f831ca35f415d235bbf79",
+      "commit": "c08e40ef451698ea3f2f831ca35f415d235bbf79",
+      "cohort": "earlier-positive",
+      "fetch_attempts": 1,
+      "application_boundary": "Space metadata root Gradio app.py",
+      "mechanisms": [
+        "application_scope"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_eligible",
+        "classification": "none",
+        "coverage": {
+          "LOCKED_STATIC": 2,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "output_sha256": "e13d7c6416452c399da22ad76da8be75de951a2589fc0a9150c450231362fe00"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 2,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "app.py:20:1  hf_hub_download  model  fun-research/TiTok  revision=<default>  coverage=LOCKED_STATIC",
+          "app.py:21:1  hf_hub_download  model  fun-research/TiTok  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/titok.patch",
+        "overlay_sha256": "44cb40e167e60320a0f06688528e55f159e0b97d5e254c1c1f25cf45ca31566d"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "fun-research/TiTok",
+            "repo_type": "model",
+            "kind": "direct_file",
+            "requested_revision": "main",
+            "sha": "ab646ed225080a3acb7c78440a574d7f67f16fa7",
+            "sources": [
+              {
+                "path": "app.py",
+                "line": 20,
+                "call": "hf_hub_download"
+              },
+              {
+                "path": "app.py",
+                "line": 21,
+                "call": "hf_hub_download"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/app.py\n+++ b/app.py\n@@ -17,8 +17,8 @@\n     \"TiTok-L-32\": (\"tokenizer_titok_l32.bin\", \"generator_titok_l32.bin\"),\n }\n \n-hf_hub_download(repo_id=\"fun-research/TiTok\", filename=\"tokenizer_titok_l32.bin\", local_dir=\"./\")\n-hf_hub_download(repo_id=\"fun-research/TiTok\", filename=\"generator_titok_l32.bin\", local_dir=\"./\")\n+hf_hub_download(repo_id=\"fun-research/TiTok\", filename=\"tokenizer_titok_l32.bin\", local_dir=\"./\", revision=\"ab646ed225080a3acb7c78440a574d7f67f16fa7\")\n+hf_hub_download(repo_id=\"fun-research/TiTok\", filename=\"generator_titok_l32.bin\", local_dir=\"./\", revision=\"ab646ed225080a3acb7c78440a574d7f67f16fa7\")\n \n # @spaces.GPU\n def load_model():\n",
+        "source_pin_diff_sha256": "7b05735d450950a4e3fd4197f3c4453bfacb298bc63fdf7c4ae3f766eeead28e",
+        "changed_python_files": [
+          "app.py"
+        ]
+      }
+    },
+    {
+      "id": "tall-masks",
+      "repository": "nik-dim/tall_masks",
+      "project_url": "https://github.com/nik-dim/tall_masks",
+      "revision_url": "https://github.com/nik-dim/tall_masks/tree/3b1b2ee365b8d734d84cf90f363d265fe3e54cdf",
+      "commit": "3b1b2ee365b8d734d84cf90f363d265fe3e54cdf",
+      "cohort": "earlier-positive",
+      "fetch_attempts": 1,
+      "application_boundary": "dataset adapter used by README-documented training and evaluation entry points",
+      "mechanisms": [
+        "application_scope"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_eligible",
+        "classification": "none",
+        "coverage": {
+          "LOCKED_STATIC": 2,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "output_sha256": "559fe55a76226d5768f40ab2078729518f8b838a14f4373d3fc258f9acc39389"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 2,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "src/datasets/fer2013.py:43:19  load_dataset  dataset  Jeneral/fer-2013  revision=<default>  coverage=LOCKED_STATIC",
+          "src/datasets/fer2013.py:57:24  load_dataset  dataset  Jeneral/fer-2013  revision=<default>  coverage=LOCKED_STATIC"
+        ],
+        "overlay": "validation/slice18/overlays/tall-masks.patch",
+        "overlay_sha256": "7af913f034f5677e445f8083b52a21d8dd5400cc0444ac30a5a48a221cd906a8"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "Jeneral/fer-2013",
+            "repo_type": "dataset",
+            "kind": "dataset",
+            "requested_revision": "main",
+            "sha": "3a46cbfae3f5b348449335f300666a0ae330f121",
+            "sources": [
+              {
+                "path": "src/datasets/fer2013.py",
+                "line": 43,
+                "call": "load_dataset"
+              },
+              {
+                "path": "src/datasets/fer2013.py",
+                "line": 57,
+                "call": "load_dataset"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/src/datasets/fer2013.py\n+++ b/src/datasets/fer2013.py\n@@ -40,7 +40,7 @@\n         # location = os.path.join(\"~/data\", \"FER2013\")\n \n         # Load the FER2013 dataset using Hugging Face datasets library\n-        fer2013 = load_dataset(\"Jeneral/fer-2013\", split=\"train\")\n+        fer2013 = load_dataset(\"Jeneral/fer-2013\", split=\"train\", revision=\"3a46cbfae3f5b348449335f300666a0ae330f121\")\n \n         # Instantiate the custom PyTorch training dataset\n         self.train_dataset = CustomFER2013Dataset(fer2013, transform=preprocess)\n@@ -54,7 +54,7 @@\n         )\n \n         # Load the FER2013 test dataset using Hugging Face datasets library\n-        fer2013_test = load_dataset(\"Jeneral/fer-2013\", split=\"test\")\n+        fer2013_test = load_dataset(\"Jeneral/fer-2013\", split=\"test\", revision=\"3a46cbfae3f5b348449335f300666a0ae330f121\")\n \n         # Instantiate the custom PyTorch test dataset\n         self.test_dataset = CustomFER2013Dataset(fer2013_test, transform=preprocess)\n",
+        "source_pin_diff_sha256": "ca5dcbd3d0285651cf5dec45693f52688f33253d77417d52732e454c8b125ed5",
+        "changed_python_files": [
+          "src/datasets/fer2013.py"
+        ]
+      }
+    },
+    {
+      "id": "sentiment-api",
+      "repository": "sahil147/sentiment-api",
+      "project_url": "https://huggingface.co/spaces/sahil147/sentiment-api",
+      "revision_url": "https://huggingface.co/spaces/sahil147/sentiment-api/tree/59775cbd780dbfd1901990b100bca2e9a0beb405",
+      "commit": "59775cbd780dbfd1901990b100bca2e9a0beb405",
+      "cohort": "production-style",
+      "fetch_attempts": 1,
+      "application_boundary": "Docker Space FastAPI app package documented as the production service",
+      "mechanisms": [
+        "application_scope",
+        "dependency_annotation"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "unsupported expression",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 4
+        },
+        "output_sha256": "d71dc4e0dbcd009b945bedcd9462e4fc274d3433d2529405b00be87cf26fdaa8"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 1,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "app/predict.py:45:19  pipeline  model  distilbert/distilbert-base-uncased-finetuned-sst-2-english  revision=main  coverage=LOCKED_ANNOTATION"
+        ],
+        "overlay": "validation/slice18/overlays/sentiment-api.patch",
+        "overlay_sha256": "85d254ba63e98cea10e28bae15ffe277a62fa72e17b8e55c4334cf9ff1a04152"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "714eb0fa89d2f80546fda750413ed43d93601a13",
+            "sources": [
+              {
+                "path": "app/predict.py",
+                "line": 45,
+                "call": "pipeline"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/app/predict.py\n+++ b/app/predict.py\n@@ -43,8 +43,8 @@\n     # device=-1 forces CPU inference. We have no GPU on the free-tier host.\n     # hf-freeze: dependency=sentiment-model\n     _classifier = pipeline(\n-        \"sentiment-analysis\", model=MODEL_NAME, device=-1\n-    )  # -1 forces the maximum CPU usage\n+        \"sentiment-analysis\", model=MODEL_NAME, device=-1, \n+    revision=\"714eb0fa89d2f80546fda750413ed43d93601a13\")  # -1 forces the maximum CPU usage\n     print(\"Model loaded and ready.\")\n \n \n",
+        "source_pin_diff_sha256": "ca185272d2419050e1de61653b4fc677f4ecb0ff7084264ec2e24673173fd140",
+        "changed_python_files": [
+          "app/predict.py"
+        ]
+      }
+    },
+    {
+      "id": "docker-model-runner",
+      "repository": "likhonsheikhdev/docker-model-runner",
+      "project_url": "https://huggingface.co/spaces/likhonsheikhdev/docker-model-runner",
+      "revision_url": "https://huggingface.co/spaces/likhonsheikhdev/docker-model-runner/tree/ab0cf4fb45b9962951619c33983a0b1836f43d29",
+      "commit": "ab0cf4fb45b9962951619c33983a0b1836f43d29",
+      "cohort": "production-style",
+      "fetch_attempts": 1,
+      "application_boundary": "Docker Space root FastAPI main.py documented as the deployed service",
+      "mechanisms": [
+        "application_scope",
+        "dependency_annotation"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "unsupported expression",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 4
+        },
+        "output_sha256": "c5286d36ca0498bd8343cdaebf46a0b630c9d3a3d15a522d54b4297b63011175"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 4,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "main.py:33:28  pipeline  model  distilbert-base-uncased-finetuned-sst-2-english  revision=main  coverage=LOCKED_ANNOTATION",
+          "main.py:41:27  pipeline  model  distilgpt2  revision=main  coverage=LOCKED_ANNOTATION",
+          "main.py:50:27  from_pretrained  model  sentence-transformers/all-MiniLM-L6-v2  revision=main  coverage=LOCKED_ANNOTATION",
+          "main.py:52:26  from_pretrained  model  sentence-transformers/all-MiniLM-L6-v2  revision=main  coverage=LOCKED_ANNOTATION"
+        ],
+        "overlay": "validation/slice18/overlays/docker-model-runner.patch",
+        "overlay_sha256": "88ad92e1052cfd5b6ba516091f943e8f1a01acb96c76cc20bcfbaa84520168df"
+      },
+      "ambient_environment_invariance": null,
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "distilbert-base-uncased-finetuned-sst-2-english",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "714eb0fa89d2f80546fda750413ed43d93601a13",
+            "sources": [
+              {
+                "path": "main.py",
+                "line": 33,
+                "call": "pipeline"
+              }
+            ]
+          },
+          {
+            "repo_id": "distilgpt2",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "2290a62682d06624634c1f46a6ad5be0f47f38aa",
+            "sources": [
+              {
+                "path": "main.py",
+                "line": 41,
+                "call": "pipeline"
+              }
+            ]
+          },
+          {
+            "repo_id": "sentence-transformers/all-MiniLM-L6-v2",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+            "sources": [
+              {
+                "path": "main.py",
+                "line": 50,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "main.py",
+                "line": 52,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/main.py\n+++ b/main.py\n@@ -34,22 +34,22 @@\n         \"text-classification\",\n         model=MODEL_NAME,\n         device=-1,  # CPU\n-        torch_dtype=torch.float32\n-    )\n+        torch_dtype=torch.float32, \n+    revision=\"714eb0fa89d2f80546fda750413ed43d93601a13\")\n \n     # hf-freeze: dependency=generator\n     models[\"generator\"] = pipeline(\n         \"text-generation\",\n         model=GENERATOR_MODEL,\n         device=-1,\n-        torch_dtype=torch.float32\n-    )\n+        torch_dtype=torch.float32, \n+    revision=\"2290a62682d06624634c1f46a6ad5be0f47f38aa\")\n \n     # Lightweight embedding model\n     # hf-freeze: dependency=embedder\n-    models[\"tokenizer\"] = AutoTokenizer.from_pretrained(EMBED_MODEL)\n+    models[\"tokenizer\"] = AutoTokenizer.from_pretrained(EMBED_MODEL, revision=\"1110a243fdf4706b3f48f1d95db1a4f5529b4d41\")\n     # hf-freeze: dependency=embedder\n-    models[\"embedder\"] = AutoModel.from_pretrained(EMBED_MODEL)\n+    models[\"embedder\"] = AutoModel.from_pretrained(EMBED_MODEL, revision=\"1110a243fdf4706b3f48f1d95db1a4f5529b4d41\")\n     models[\"embedder\"].eval()\n \n     print(\"✅ All models loaded successfully!\")\n",
+        "source_pin_diff_sha256": "3a3f98749f5ee203391341ec1fdcff140cb60a5b8a92bf12667a7648a8c73190",
+        "changed_python_files": [
+          "main.py"
+        ]
+      }
+    },
+    {
+      "id": "medgemma-space",
+      "repository": "warshanks/medgemma-4b-it",
+      "project_url": "https://huggingface.co/spaces/warshanks/medgemma-4b-it",
+      "revision_url": "https://huggingface.co/spaces/warshanks/medgemma-4b-it/tree/e2b9b1aaabf0e513351dee752e305ec4df7f6e60",
+      "commit": "e2b9b1aaabf0e513351dee752e305ec4df7f6e60",
+      "cohort": "production-style",
+      "fetch_attempts": 1,
+      "application_boundary": "Space metadata app_file selects the root Gradio app.py",
+      "mechanisms": [
+        "application_scope",
+        "environment_binding"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "scope",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 2
+        },
+        "output_sha256": "3c78407c8f936931217c9c375dfebed7cb24f4ecf20dc289946c620fbd639b4f"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 2,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "app.py:18:13  from_pretrained  model  google/medgemma-4b-it  revision=main  coverage=LOCKED_ENV_BINDING",
+          "app.py:19:9  from_pretrained  model  google/medgemma-4b-it  revision=main  coverage=LOCKED_ENV_BINDING"
+        ],
+        "overlay": "validation/slice18/overlays/medgemma-space.patch",
+        "overlay_sha256": "e8d800f1d3a2a8b8ac3aae8cd55726d915a1d7f4c068c364cdfc56dd30d1accc"
+      },
+      "ambient_environment_invariance": {
+        "variables": [
+          "MODEL_ID"
+        ],
+        "absent_scan_exit_code": 0,
+        "conflicting_scan_exit_code": 0,
+        "classification_equivalent": true,
+        "absent_lock_exit_code": 0,
+        "conflicting_lock_exit_code": 0,
+        "lock_truth_equivalent": true,
+        "lock_sha256": "a87d32132c2b85a29b1de75a6ed5477b694cad7df3f12a7435c5ae3c3979a47e"
+      },
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "google/medgemma-4b-it",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "290cda5eeccbee130f987c4ad74a59ae6f196408",
+            "sources": [
+              {
+                "path": "app.py",
+                "line": 18,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "app.py",
+                "line": 19,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/app.py\n+++ b/app.py\n@@ -15,10 +15,10 @@\n from transformers import AutoProcessor, AutoModelForImageTextToText, TextIteratorStreamer\n \n model_id = os.getenv(\"MODEL_ID\", \"google/medgemma-4b-it\")\n-processor = AutoProcessor.from_pretrained(model_id)\n+processor = AutoProcessor.from_pretrained(model_id, revision=\"290cda5eeccbee130f987c4ad74a59ae6f196408\")\n model = AutoModelForImageTextToText.from_pretrained(\n-    model_id, device_map=\"auto\", torch_dtype=torch.bfloat16\n-)\n+    model_id, device_map=\"auto\", torch_dtype=torch.bfloat16, \n+revision=\"290cda5eeccbee130f987c4ad74a59ae6f196408\")\n \n MAX_NUM_IMAGES = int(os.getenv(\"MAX_NUM_IMAGES\", \"5\"))\n \n",
+        "source_pin_diff_sha256": "b8317b7d648724c41dd39f491d4fd3d27eed897eba4c8632f3f8f5554a60d96c",
+        "changed_python_files": [
+          "app.py"
+        ]
+      }
+    },
+    {
+      "id": "emotion-space",
+      "repository": "Marcel0123/emotie-herkennen-gezichten-mens",
+      "project_url": "https://huggingface.co/spaces/Marcel0123/emotie-herkennen-gezichten-mens",
+      "revision_url": "https://huggingface.co/spaces/Marcel0123/emotie-herkennen-gezichten-mens/tree/5efa22b5f79bd9e0fadb284aec803cb506fadccc",
+      "commit": "5efa22b5f79bd9e0fadb284aec803cb506fadccc",
+      "cohort": "production-style",
+      "fetch_attempts": 1,
+      "application_boundary": "Space metadata app_file selects the root Gradio app.py",
+      "mechanisms": [
+        "application_scope",
+        "environment_binding"
+      ],
+      "full_tree": {
+        "scan_exit_code": 0,
+        "outcome": "scan_complete_lock_ineligible",
+        "classification": "scope",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 0,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 2
+        },
+        "output_sha256": "5d1ea6fea7d135f1514c769aaa478b06626756bf41af455aeca07ebd2ed0f451"
+      },
+      "configured_scope": {
+        "scan_exit_code": 0,
+        "outcome": "no_unresolved_findings",
+        "coverage": {
+          "LOCKED_STATIC": 0,
+          "LOCKED_ENV_BINDING": 2,
+          "LOCKED_ANNOTATION": 0,
+          "ACKNOWLEDGED_DYNAMIC": 0,
+          "UNRESOLVED": 0
+        },
+        "findings": [
+          "app.py:14:13  from_pretrained  model  Tanneru/Facial-Emotion-Detection-FER-RAFDB-AffectNet-BEIT-Large  revision=main  coverage=LOCKED_ENV_BINDING",
+          "app.py:15:9  from_pretrained  model  Tanneru/Facial-Emotion-Detection-FER-RAFDB-AffectNet-BEIT-Large  revision=main  coverage=LOCKED_ENV_BINDING"
+        ],
+        "overlay": "validation/slice18/overlays/emotion-space.patch",
+        "overlay_sha256": "271e13a905d24c21a39a5795e49630e7d7c11d495077c5d75fb1720085ced208"
+      },
+      "ambient_environment_invariance": {
+        "variables": [
+          "MODEL_ID"
+        ],
+        "absent_scan_exit_code": 0,
+        "conflicting_scan_exit_code": 0,
+        "classification_equivalent": true,
+        "absent_lock_exit_code": 0,
+        "conflicting_lock_exit_code": 0,
+        "lock_truth_equivalent": true,
+        "lock_sha256": "6421c1ab8dda534666cad1baf2b5841c398347c1558d87e88cb590f35da96150"
+      },
+      "lifecycle": {
+        "status": "complete",
+        "commands": [
+          {
+            "command": "hf-freeze scan .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze lock .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin .",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze pin . --write",
+            "exit_code": 0
+          },
+          {
+            "command": "hf-freeze check . --frozen",
+            "exit_code": 0
+          }
+        ],
+        "lock_entries": [
+          {
+            "repo_id": "Tanneru/Facial-Emotion-Detection-FER-RAFDB-AffectNet-BEIT-Large",
+            "repo_type": "model",
+            "kind": "model",
+            "requested_revision": "main",
+            "sha": "68cbe4de6a93da0ec70267ab792b539311ad3d3f",
+            "sources": [
+              {
+                "path": "app.py",
+                "line": 14,
+                "call": "from_pretrained"
+              },
+              {
+                "path": "app.py",
+                "line": 15,
+                "call": "from_pretrained"
+              }
+            ]
+          }
+        ],
+        "source_pin_diff": "--- a/app.py\n+++ b/app.py\n@@ -11,8 +11,8 @@\n TOPK = int(os.getenv(\"TOPK\", \"3\"))\n CONF_THRESHOLD = float(os.getenv(\"CONF_THRESHOLD\", \"0.5\"))\n \n-processor = AutoImageProcessor.from_pretrained(MODEL_ID)\n-model = AutoModelForImageClassification.from_pretrained(MODEL_ID)\n+processor = AutoImageProcessor.from_pretrained(MODEL_ID, revision=\"68cbe4de6a93da0ec70267ab792b539311ad3d3f\")\n+model = AutoModelForImageClassification.from_pretrained(MODEL_ID, revision=\"68cbe4de6a93da0ec70267ab792b539311ad3d3f\")\n model.eval()\n \n mp_face_detection = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)\n",
+        "source_pin_diff_sha256": "500e4997f86778a884749ee0f3b7b9ef183cc7fc391434a5339440c784b8f98c",
+        "changed_python_files": [
+          "app.py"
+        ]
+      }
+    }
+  ]
+}

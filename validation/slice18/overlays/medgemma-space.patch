@@ -1,0 +1,16 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..dc6e53d
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,10 @@
++[tool.hf-freeze]
++include = ["app.py"]
++
++[tool.hf-freeze.dependencies.medgemma]
++repo_id = "google/medgemma-4b-it"
++repo_type = "model"
++revision = "main"
++
++[tool.hf-freeze.bindings.environment]
++MODEL_ID = "medgemma"

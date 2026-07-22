@@ -1,0 +1,8 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..b7e54aa
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,2 @@
++[tool.hf-freeze]
++include = ["src/datasets/fer2013.py"]
